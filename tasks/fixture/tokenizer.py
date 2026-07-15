@@ -49,4 +49,43 @@ def tokenize(source: str) -> list[Token]:
     异常:
         errors.LexError: 遇到非法/未知字符时。
     """
-    raise NotImplementedError
+    i = 0
+    dic = {"+": "PLUS", "-": "MINUS", "*": "STAR", "/": "SLASH", "(": "LPAREN", ")": "RPAREN"}
+    result = []
+    while i < len(source):
+        c = source[i]
+        if str.isspace(c):
+            i += 1
+            continue
+        elif c in dic:
+            result.append(Token(dic[c], c))
+            i += 1
+        elif c >= "0" and c <= "9":
+            num = ""
+            is_float = False
+            j = i
+            while j < len(source) and source[j] >= "0" and source[j] <= "9":
+                num += source[j]
+                j += 1
+            if j < len(source) and source[j] == ".":
+                num += source[j]
+                j += 1
+                if j == len(source):
+                    raise LexError(f"source 第{j - 1}个字符非法：{source[j - 1]}")
+                elif source[j] < "0" or source[j] > "9":
+                    raise LexError(f"source 第{j}个字符非法：{source[j]}")
+                else:
+                    while j < len(source) and source[j] >= "0" and source[j] <= "9":
+                        num += source[j]
+                        j += 1
+                num = float(num)
+                is_float = True
+            if not is_float:
+                num = int(num)
+            result.append(Token("NUMBER", num))
+            i = j
+        else:
+            raise LexError(f"source 第{i}个字符非法：{c}")
+    result.append(Token("EOF", None))
+    return result
+
