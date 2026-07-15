@@ -1,0 +1,11 @@
+{
+  "id": "002_eval_division_stub",
+  "title": "Implement the division branch of eval_ast (true division; EvalError on divide-by-zero)",
+  "kind": "implement_stub",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_evaluator.py::test_eval_division_is_float",
+    "tests/test_evaluator.py::test_eval_division_fractional",
+    "tests/test_evaluator.py::test_eval_division_by_zero_raises"
+  ]
+}

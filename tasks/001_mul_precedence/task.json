@@ -1,0 +1,9 @@
+{
+  "id": "001_mul_precedence",
+  "title": "Fix operator precedence: '*' '/' must bind tighter than '+' '-'",
+  "kind": "fix_bug",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_parser.py::test_precedence_mul_over_add"
+  ]
+}

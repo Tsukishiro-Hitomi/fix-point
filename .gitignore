@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# venv
+.venv/
+
+# secrets — NEVER commit
+.env
+
+# model / embedding caches (if HF_HOME or ST cache is pointed inside the repo)
+.cache/
+models/
+*.safetensors
+*.bin
+
+# benchmark run artifacts
+eval/results/
+
+# macOS
+.DS_Store
+
+# plan
+ROADMAP.md
+DESIGN.md
