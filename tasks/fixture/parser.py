@@ -59,4 +59,51 @@ def parse(tokens: list[Token]) -> Node:
         errors.ParseError: token 序列不符合文法时（残留 token、括号不匹配、空
             输入、悬空/相邻运算符、不支持的一元正号等）。
     """
-    raise NotImplementedError
+    # 游标
+    pos = 0
+    def peek():
+        return tokens[pos]
+    def advance():
+        nonlocal pos    # 要求函数闭包读外部变量
+        t = tokens[pos]
+        pos += 1
+        return t
+    def primary():
+        t = peek()
+        if t.type == "NUMBER":
+            advance()
+            return ("num", t.value)
+        if t.type == "LPAREN":
+            advance()
+            node = expr()    
+            if peek().type != "RPAREN":     # 括号未闭合
+                raise ParseError(f"这里 token.type 应该为 ""RPAREN""，实际为{t.type}")
+            advance()
+            return node
+        raise ParseError(f"这里 token.type 应该为 ""NUMBER"" 或 ""LPAREN""，实际为{t.type}")
+    def factor():
+        t = peek()
+        if t.type == "MINUS":
+            advance()
+            return ("neg", factor())
+        else:
+            return primary()
+    def term():
+        left = factor()
+        while peek().type in ("STAR", "SLASH"):
+            op = advance().value                       
+            right = factor()
+            left = ("binop", op, left, right)      
+        return left  
+    def expr():
+        left = term()
+        while peek().type in ("PLUS", "MINUS"):
+            op = advance().value                      
+            right = term()
+            left = ("binop", op, left, right)     
+        return left
+
+    node = expr()
+    if peek().type != "EOF":
+        raise ParseError(f"表达式后面还有多余的东西：{peek().type}")
+    return node
