@@ -40,7 +40,27 @@ def eval_ast(node: Node) -> Number:
     异常:
         errors.EvalError: 除以零时。
     """
-    raise NotImplementedError
+    tag = node[0]
+    
+    if tag == "num":
+        return node[1]
+    elif tag == "binop":
+        op = node[1]
+        left = eval_ast(node[2])
+        right = eval_ast(node[3])
+        if op == "/" and right == 0:
+            raise EvalError("除法错误：除数为0")
+        if op == "+":
+            return left + right
+        if op == "-":
+            return left - right
+        if op == "*":
+            return left * right
+        if op == "/":
+            return float(left) / right
+    else:
+        return -eval_ast(node[1])
+
 
 
 def evaluate(source: str) -> Number:
@@ -58,4 +78,6 @@ def evaluate(source: str) -> Number:
         errors.ParseError: 语法期（不符合文法）。
         errors.EvalError:  求值期（除以零）。
     """
-    raise NotImplementedError
+    tokens = tokenize(source)
+    node = parse(tokens)
+    return eval_ast(node)
