@@ -80,10 +80,14 @@ python cli.py bench
   results, iterates; bounded by MAX_STEPS and a per-task cost budget. -->
 - **The tools** — `list_dir`, `read_file`, `search`, `edit_file`, `write_file`,
   `run_tests`. <!-- TODO: 1 line each; all paths confined to the task workdir. -->
-- **The task set (Plan A)** — one pristine `fixture/` (a mini arithmetic-expression
-  evaluator: tokenizer → parser → evaluator, all green under pytest). Each task
-  ships a `break.patch` that breaks one function; the agent must make the tests
-  green again. <!-- TODO: expand. -->
+- **The task set** — a single pristine `fixture/`: a compact arithmetic-expression
+  evaluator in three stages — `tokenizer` (source → tokens), `parser` (tokens → AST
+  via recursive descent, with real operator precedence, left-associativity, and
+  unary minus), and `evaluator` (AST → number; true division, divide-by-zero
+  raises), over a shared `errors` hierarchy. The pristine library is fully green:
+  51 pytest cases across the three stages plus end-to-end integration. Each task
+  then applies a `break.patch` that breaks exactly one function, turning a known
+  subset of those tests red; the agent has to make the suite green again.
 - **Scoring** — a harness independently re-runs `pytest` against the pristine
   tests. A task is *solved* iff the target test passes **and** no other test
   newly fails. The model is never trusted to grade itself. <!-- TODO: expand. -->
