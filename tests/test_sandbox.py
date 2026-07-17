@@ -8,8 +8,11 @@
 用例现在应为**红灯**——它们是待实现的规格；实现补齐后即应转绿。
 """
 
+import difflib
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -21,6 +24,10 @@ from agent.sandbox import (
     make_workspace,
     resolve_in_workdir,
     task_sandbox,
+)
+
+FIXTURE_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "tasks", "fixture"
 )
 
 
@@ -174,52 +181,130 @@ def test_root_realpath_normalization_consistency():
 # 这些用例需要真实的 tasks/fixture/ 与某个 break.patch 作为素材，先占位登记；
 # 补齐时请对照 §5.4 的验收清单逐条落地。
 # --------------------------------------------------------------------------- #
-@pytest.mark.skip(reason="TODO(你来补): make_workspace 后 workdir 存在且含 6 个 fixture 条目"
-                         "（tokenizer/parser/evaluator/errors/conftest + tests/），"
-                         "且返回值为规范绝对路径")
 def test_make_workspace_populates_workdir():
-    pass
+    workdir = make_workspace(FIXTURE_DIR)
+    try:
+        # 绝对路径
+        assert os.path.isabs(workdir)
+        # 规范路径
+        assert workdir == os.path.realpath(workdir)
+        # 真实路径
+        assert os.path.isdir(workdir)
+    finally:
+        cleanup_workspace(workdir)
 
+def snapshot(root):
+    """把 root 下每个文件（排除 __pycache__/*.pyc）读成 {相对路径: 字节} 的 dict。"""
+    snap = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]   # 不进 __pycache__
+        for name in filenames:
+            if name.endswith(".pyc"):
+                continue
+            full = os.path.join(dirpath, name)
+            rel = os.path.relpath(full, root)          # 用相对路径当 key
+            with open(full, "rb") as f:
+                snap[rel] = f.read()                    # 存原始字节
+    return snap
 
-@pytest.mark.skip(reason="TODO(你来补): make_workspace 不拷 __pycache__/*.pyc；"
-                         "跑完后纯净 tasks/fixture/（排除 __pycache__）逐字节未变")
 def test_make_workspace_ignores_bytecode_and_leaves_fixture_pristine():
-    pass
+    before = snapshot(FIXTURE_DIR)
+    workdir = make_workspace(FIXTURE_DIR)
+    try:
+        assert snapshot(FIXTURE_DIR) == before
+        for dirpath, dirnames, filenames in os.walk(workdir):
+            assert "__pycache__" not in filenames
+            assert not any(f.endswith(".pyc") for f in filenames)
+    finally:
+        cleanup_workspace(workdir)
+
+def test_make_workspace_applies_break_patch(tmp_path):
+    # 基于真实 evaluator.py 造一个破坏除法的补丁（difflib 生成，带 a/ b/ 前缀以配合 -p1）
+    target = "evaluator.py"
+    with open(os.path.join(FIXTURE_DIR, target), encoding="utf-8") as f:
+        original = f.read()
+    broken = original.replace("float(left) / right", "float(left) * right")
+    assert broken != original, "预设的破坏点不在 evaluator.py 里，请换一个片段"
+
+    patch_text = "".join(
+        difflib.unified_diff(
+            original.splitlines(keepends=True),
+            broken.splitlines(keepends=True),
+            fromfile=f"a/{target}",
+            tofile=f"b/{target}",
+        )
+    )
+    patch_file = tmp_path / "break.patch"
+    patch_file.write_text(patch_text, encoding="utf-8")
+
+    # 对照：不打补丁的纯净副本，evaluator 测试全绿
+    baseline = make_workspace(FIXTURE_DIR)
+    try:
+        r0 = subprocess.run(
+            [sys.executable, "-m", "pytest", "tests/test_evaluator.py", "-q"],
+            cwd=baseline, capture_output=True, text=True,
+        )
+        assert r0.returncode == 0, f"纯净副本本应全绿：\n{r0.stdout}"
+    finally:
+        cleanup_workspace(baseline)
+
+    # 打了补丁的副本：除法被改坏 → evaluator 测试应变红
+    workdir = make_workspace(FIXTURE_DIR, str(patch_file))
+    try:
+        r1 = subprocess.run(
+            [sys.executable, "-m", "pytest", "tests/test_evaluator.py", "-q"],
+            cwd=workdir, capture_output=True, text=True,
+        )
+        assert r1.returncode != 0, f"打补丁后本应变红，实际输出：\n{r1.stdout}"
+    finally:
+        cleanup_workspace(workdir)
 
 
-@pytest.mark.skip(reason="TODO(你来补): patch_path 非 None 时打上 break.patch 制造坏状态——"
-                         "在 workdir 跑 pytest 目标测试变红（对照纯净全绿）")
-def test_make_workspace_applies_break_patch():
-    pass
+def test_make_workspace_bad_patch_raises_sandboxerror(tmp_path):
+    # 上下文对不上的补丁：git apply 在 evaluator.py 里找不到这段内容 → 应用失败
+    bad_patch = (
+        "--- a/evaluator.py\n"
+        "+++ b/evaluator.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-NONEXISTENT_CONTEXT_LINE_ZZZ\n"
+        "+replacement\n"
+    )
+    patch_file = tmp_path / "bad.patch"
+    patch_file.write_text(bad_patch, encoding="utf-8")
 
+    with pytest.raises(SandboxError) as excinfo:
+        make_workspace(FIXTURE_DIR, str(patch_file))
+    # message 里应带上 git 的 stderr（含出错文件名），供 harness 排障
+    assert "evaluator.py" in str(excinfo.value)
 
-@pytest.mark.skip(reason="TODO(你来补): 上下文对不上的补丁 → make_workspace 抛 SandboxError，"
-                         "message 含 git stderr（可被 harness 与『未解出』区分）")
-def test_make_workspace_bad_patch_raises_sandboxerror():
-    pass
-
-
-@pytest.mark.skip(reason="TODO(你来补): 连续两次 make_workspace 得到不同 workdir、互不干扰")
 def test_make_workspace_isolation_between_calls():
-    pass
+    try:
+        workdir_1 = make_workspace(FIXTURE_DIR)
+        workdir_2 = make_workspace(FIXTURE_DIR)
+        assert workdir_1 != workdir_2
+    finally:
+        cleanup_workspace(workdir_1)
+        cleanup_workspace(workdir_2)
 
-
-@pytest.mark.skip(reason="TODO(你来补): cleanup_workspace 后 os.path.exists(workdir) 为 False")
 def test_cleanup_workspace_removes_dir():
-    pass
+    workdir = make_workspace(FIXTURE_DIR)
+    cleanup_workspace(workdir)
+    assert os.path.exists(workdir) == False
+
+def test_cleanup_workspace_swallows_errors(monkeypatch):
+    cleanup_workspace("/any/path")  
 
 
-@pytest.mark.skip(reason="TODO(你来补): cleanup_workspace 遇 rmtree 失败只记日志、不抛异常")
-def test_cleanup_workspace_swallows_errors():
-    pass
-
-
-@pytest.mark.skip(reason="TODO(你来补): task_sandbox 正常路径 yield 出有效 workdir、退出后已清理")
 def test_task_sandbox_yields_and_cleans_up():
-    pass
+    with task_sandbox(FIXTURE_DIR) as workdir:
+        assert os.path.isabs(workdir)
+        assert workdir == os.path.realpath(workdir)
+        assert os.path.isdir(workdir)
+    assert os.path.exists(workdir) == False
 
-
-@pytest.mark.skip(reason="TODO(你来补): task_sandbox 在 with 体内主动 raise 时，"
-                         "finally 仍清理 workdir")
 def test_task_sandbox_cleans_up_on_exception():
-    pass
+    with pytest.raises(SandboxError):
+        with task_sandbox(FIXTURE_DIR) as workdir:
+            assert os.path.isdir(workdir)
+            raise SandboxError("模拟出错")
+    assert os.path.exists(workdir) == False

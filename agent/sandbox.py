@@ -108,7 +108,14 @@ def resolve_in_workdir(workdir: str, user_path: str) -> str:
     PathEscape:
         规范化后的候选路径落在 ``root`` 之外时抛出，message 含原始输入与解析落点。
     """
-    raise NotImplementedError
+    root = os.path.realpath(workdir)
+    candidate = user_path if os.path.isabs(user_path) else os.path.join(root, user_path)
+    candidate = os.path.realpath(candidate)
+
+    if candidate == root or candidate.startswith(root + os.sep):
+        return candidate
+    else:
+        raise PathEscape(f"{user_path}解析后的绝对路径为{candidate}，不在工作区{workdir}内")
 
 
 # --------------------------------------------------------------------------- #
@@ -155,8 +162,28 @@ def make_workspace(fixture_dir: str, patch_path: Optional[str] = None) -> str:
     调用方负责在用完后调用 ``cleanup_workspace``（或改用 ``task_sandbox`` 上下文管理器
     自动清理）。``eval`` 需跨「prepare→run→judge」持有 workdir，故用本函数 + 显式清理。
     """
-    raise NotImplementedError
+    temp_dir = tempfile.mkdtemp(prefix="fixpoint_task_")   # 新建临时目录
+    work_dir = os.path.realpath(temp_dir)   # 转为绝对路径
 
+    try:
+        shutil.copytree(fixture_dir, work_dir,
+       ignore=shutil.ignore_patterns("__pycache__", "*.pyc"), dirs_exist_ok=True)    # 拷贝，跳过字节缓存
+    except Exception as e:
+        raise SandboxError(f"工作树拷贝失败：{fixture_dir} -> {work_dir}: {e}") from e 
+
+    # 手动打 bug 制造“坏”状态
+    if patch_path is not None:
+        result = subprocess.run(
+            ["git", "apply", "-p1", patch_path],
+            cwd=work_dir,              
+            capture_output=True,  
+            text=True,                   
+        )
+        if result.returncode != 0:
+            cleanup_workspace(work_dir)
+            raise SandboxError(f"git apply 失败：{result.stderr}")
+
+    return work_dir
 
 def cleanup_workspace(workdir: str) -> None:
     """尽力删除一个由 ``make_workspace`` 建出的工作区。
@@ -175,7 +202,10 @@ def cleanup_workspace(workdir: str) -> None:
     ----
     None。
     """
-    raise NotImplementedError
+    try:
+        shutil.rmtree(workdir)
+    except Exception as e:
+        logger.warning(f"清理工作区{workdir}失败：{e}")
 
 
 @contextmanager
@@ -212,5 +242,9 @@ def task_sandbox(
     SandboxError:
         建立阶段（copytree / git apply）失败时，由 ``make_workspace`` 透传抛出。
     """
-    raise NotImplementedError
-    yield ""  # pragma: no cover -- 仅为使本函数成为生成器（@contextmanager 要求）
+    work_dir = make_workspace(fixture_dir, patch_path)
+    try:
+        yield work_dir
+    finally:
+        cleanup_workspace(work_dir)
+
