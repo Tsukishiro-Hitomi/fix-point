@@ -177,6 +177,68 @@ def test_read_file_missing_file_returns_error(tmp_path):
     assert out.startswith("错误：")
 
 
+def test_read_file_slice_is_inclusive(tmp_path):
+    (tmp_path / "f.txt").write_text("".join(f"line{i}\n" for i in range(1, 11)), encoding="utf-8")
+    out = read_file(str(tmp_path), "f.txt", start_line=2, end_line=4)
+    assert not out.startswith("错误：")
+    for n in (2, 3, 4):
+        assert f"line{n}" in out
+    assert "     1\t" not in out  # 第 1 行不在范围内
+    assert "     5\t" not in out  # 第 5 行不在范围内
+
+
+def test_read_file_clamps_out_of_range(tmp_path):
+    (tmp_path / "f.txt").write_text("".join(f"line{i}\n" for i in range(1, 6)), encoding="utf-8")
+    out = read_file(str(tmp_path), "f.txt", start_line=-3, end_line=999)
+    assert not out.startswith("错误：")
+    assert "     1\tline1" in out  # start 夹到 1
+    assert "     5\tline5" in out  # end 夹到末行
+
+
+def test_read_file_start_beyond_total(tmp_path):
+    (tmp_path / "f.txt").write_text("a\nb\n", encoding="utf-8")
+    out = read_file(str(tmp_path), "f.txt", start_line=5)
+    assert out.startswith("错误：")
+    assert "超过文件总行数" in out
+
+
+def test_read_file_start_gt_end(tmp_path):
+    (tmp_path / "f.txt").write_text("a\nb\nc\n", encoding="utf-8")
+    out = read_file(str(tmp_path), "f.txt", start_line=3, end_line=2)
+    assert out.startswith("错误：")
+    assert "大于" in out
+
+
+def test_read_file_on_directory(tmp_path):
+    (tmp_path / "d").mkdir()
+    out = read_file(str(tmp_path), "d")
+    assert out.startswith("错误：")
+    assert "目录" in out
+
+
+def test_read_file_binary_returns_error(tmp_path):
+    (tmp_path / "b.bin").write_bytes(b"\xff\xfe\x00\x01\xff")
+    out = read_file(str(tmp_path), "b.bin")
+    assert out.startswith("错误：")
+    assert "无法以文本读取" in out
+
+
+def test_read_file_empty(tmp_path):
+    (tmp_path / "e.txt").write_text("", encoding="utf-8")
+    out = read_file(str(tmp_path), "e.txt")
+    assert "空文件" in out
+    assert not out.startswith("错误：")  # 空文件不是错误
+
+
+def test_read_file_truncates_over_max(tmp_path):
+    (tmp_path / "big.txt").write_text("".join(f"line{i}\n" for i in range(1, 21)), encoding="utf-8")
+    out = read_file(str(tmp_path), "big.txt", max_read_lines=5)
+    assert "已截断" in out
+    assert "     1\tline1" in out
+    assert "     5\tline5" in out
+    assert "     6\t" not in out  # 只显示前 5 行
+
+
 # ===========================================================================
 # search：命中格式（红灯规格，DESIGN §6.4「search」）
 # ===========================================================================
@@ -194,6 +256,64 @@ def test_search_no_match(tmp_path):
     (tmp_path / "code.py").write_text("nothing here\n", encoding="utf-8")
     out = search(str(tmp_path), "zzz_not_present")
     assert out.startswith("（无匹配）")
+
+
+def test_search_empty_query_returns_error(tmp_path):
+    (tmp_path / "a.py").write_text("hello\n", encoding="utf-8")
+    out = search(str(tmp_path), "")
+    assert out.startswith("错误：")
+    assert "不能为空" in out
+
+
+def test_search_scope_subdir(tmp_path):
+    (tmp_path / "top.py").write_text("needle here\n", encoding="utf-8")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "inner.py").write_text("needle here\n", encoding="utf-8")
+    out = search(str(tmp_path), "needle", path="sub")  # 只搜 sub/
+    assert "sub/inner.py:1:" in out
+    assert "top.py" not in out
+    assert "共 1 处匹配" in out
+
+
+def test_search_scope_single_file(tmp_path):
+    (tmp_path / "a.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("needle\n", encoding="utf-8")
+    out = search(str(tmp_path), "needle", path="a.py")  # path 指向单文件
+    assert "a.py:1:" in out
+    assert "b.py" not in out
+    assert "共 1 处匹配" in out
+
+
+def test_search_skips_noise_and_binary(tmp_path):
+    (tmp_path / "real.py").write_text("needle\n", encoding="utf-8")
+    pycache = tmp_path / "__pycache__"
+    pycache.mkdir()
+    (pycache / "cached.py").write_text("needle\n", encoding="utf-8")  # 噪声目录
+    (tmp_path / "mod.pyc").write_text("needle\n", encoding="utf-8")   # .pyc
+    (tmp_path / "blob.bin").write_bytes(b"needle\xff\xfe\x00")        # 二进制
+    out = search(str(tmp_path), "needle")
+    assert "real.py:1:" in out
+    assert "__pycache__" not in out
+    assert "mod.pyc" not in out
+    assert "blob.bin" not in out
+    assert "共 1 处匹配" in out
+
+
+def test_search_truncates_long_line(tmp_path):
+    long_line = "x" * 100 + "needle" + "y" * 200  # 命中且远超 200 字符
+    (tmp_path / "long.py").write_text(long_line + "\n", encoding="utf-8")
+    out = search(str(tmp_path), "needle")
+    assert "long.py:1:" in out
+    assert "…" in out
+    assert "y" * 200 not in out  # 200 字符之后被砍掉
+
+
+def test_search_caps_at_max_hits(tmp_path):
+    (tmp_path / "many.py").write_text("hit\n" * 10, encoding="utf-8")  # 10 行都命中
+    out = search(str(tmp_path), "hit", max_search_hits=3)
+    assert "命中过多" in out
+    assert "共 3 处匹配" in out  # 只取前 3 条
 
 
 # ===========================================================================
@@ -244,36 +364,68 @@ def test_write_file_creates_with_parent_dirs(tmp_path):
     assert (tmp_path / "sub" / "new.py").read_text(encoding="utf-8") == "print('hi')\n"
 
 
+def test_write_file_create_then_overwrite(tmp_path):
+    out1 = write_file(str(tmp_path), "f.txt", "hello\n")
+    assert not out1.startswith("错误：")
+    assert "创建" in out1
+    assert "6 字节" in out1  # "hello\n" 编码为 6 字节
+    assert "1 行" in out1
+    out2 = write_file(str(tmp_path), "f.txt", "hi\n")  # 再写同一文件
+    assert "覆盖" in out2
+    assert (tmp_path / "f.txt").read_text(encoding="utf-8") == "hi\n"
+
+
+def test_write_file_target_is_dir_returns_error(tmp_path):
+    (tmp_path / "d").mkdir()
+    out = write_file(str(tmp_path), "d", "x")
+    assert out.startswith("错误：")
+    assert "目录" in out
+    assert (tmp_path / "d").is_dir()  # 目录未被破坏
+
+
+# ===========================================================================
+# list_dir：排序 / 目录尾斜杠 / 过滤噪声 / 空目录 / 错误串（DESIGN §6.4「list_dir」）
+# ===========================================================================
+def test_list_dir_sorted_with_dir_slash(tmp_path):
+    (tmp_path / "b.py").write_text("", encoding="utf-8")
+    (tmp_path / "a.py").write_text("", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    out = list_dir(str(tmp_path))
+    assert not out.startswith("错误：")
+    # 首行是目录名，其后每行一个条目（两空格缩进）。
+    entries = [ln.strip() for ln in out.splitlines()[1:]]
+    assert entries == ["a.py", "b.py", "sub/"]  # 字母序；目录带尾 "/"
+
+
+def test_list_dir_filters_noise(tmp_path):
+    (tmp_path / "keep.py").write_text("", encoding="utf-8")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / ".pytest_cache").mkdir()
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "mod.pyc").write_text("", encoding="utf-8")
+    out = list_dir(str(tmp_path))
+    assert "keep.py" in out
+    for noise in ("__pycache__", ".pytest_cache", ".git", ".pyc"):
+        assert noise not in out
+
+
+def test_list_dir_empty_after_filter(tmp_path):
+    d = tmp_path / "d"
+    d.mkdir()
+    (d / "__pycache__").mkdir()  # 只有噪声 → 过滤后视为空
+    out = list_dir(str(tmp_path), "d")
+    assert out == "d/：（空目录）"
+
+
+def test_list_dir_missing_and_not_dir(tmp_path):
+    assert list_dir(str(tmp_path), "nope") == "错误：目录不存在：nope"
+    (tmp_path / "f.py").write_text("", encoding="utf-8")
+    assert list_dir(str(tmp_path), "f.py") == "错误：不是目录：f.py"
+
+
 # ===========================================================================
 # TODO(你来补)：以下契约留待补测（DESIGN §6.2 / §6.4）
 # ===========================================================================
-# --- read_file ---
-# TODO(你来补): 测试 start_line/end_line 切片（1-based、含端点）取到正确的行范围。
-# TODO(你来补): 测试 start_line < 1 夹取到 1；end_line 超总行数夹取到末行。
-# TODO(你来补): 测试 start_line > 总行数 → "错误：起始行 … 超过文件总行数 …"。
-# TODO(你来补): 测试 start_line > end_line → "错误：start_line 大于 end_line"。
-# TODO(你来补): 测试目录路径 → "错误：不是文件（是目录）：…"。
-# TODO(你来补): 测试二进制/非 utf-8 文件 → "错误：无法以文本读取（疑似二进制）：…"。
-# TODO(你来补): 测试空文件 → 带头部的 "（空文件）"。
-# TODO(你来补): 测试超过 max_read_lines（默认 400）→ 只显示前 N 行 + "…（已截断，共 M 行 …）"。
-#
-# --- search ---
-# TODO(你来补): 测试 query 为空串 → "错误：搜索关键字不能为空"。
-# TODO(你来补): 测试限定子目录 / 单文件时搜索范围正确收窄。
-# TODO(你来补): 测试跳过 __pycache__/.pytest_cache/*.pyc/.git 噪声与二进制文件。
-# TODO(你来补): 测试单行超 200 字符被截断加 "…"。
-# TODO(你来补): 测试超过 max_search_hits（默认 100）→ 截断 + "…（命中过多 …）"。
-#
-# --- list_dir ---
-# TODO(你来补): 测试条目按字母序、目录名带尾 "/"。
-# TODO(你来补): 测试过滤 __pycache__/.pytest_cache/*.pyc/.git 噪声。
-# TODO(你来补): 测试过滤后空目录 → "<path>/：（空目录）"。
-# TODO(你来补): 测试目录不存在 → "错误：目录不存在：…"；path 是文件 → "错误：不是目录：…"。
-#
-# --- write_file ---
-# TODO(你来补): 测试覆盖已存在文件时返回文案区分「已覆盖」与「已创建」，且含字节数/行数。
-# TODO(你来补): 测试目标规范化后是已存在目录 → "错误：目标是一个目录：…"。
-#
 # --- edit_file ---
 # TODO(你来补): 测试文件不存在 → "错误：文件不存在：…（如需新建请用 write_file）"。
 # TODO(你来补): 测试唯一替换成功返回里含替换处起始行号与上下文（带行号，约 5 行）。

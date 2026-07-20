@@ -33,6 +33,10 @@ from typing import Optional
 # handlers 与 guarded_execute 经此访问 sandbox.resolve_in_workdir / sandbox.PathEscape
 # （DESIGN §5 是路径封闭与隔离目录的唯一 owner；tools 只消费其接口，不重复实现）。
 from agent import sandbox
+import os
+import re
+import subprocess
+import sys
 
 
 # ---------------------------------------------------------------------------
@@ -208,8 +212,29 @@ def list_dir(workdir: str, path: str = ".") -> str:
     ----------------
     首行为目录名，随后每行一个条目、两空格缩进。文本里的路径用 workdir 相对形式。
     """
-    raise NotImplementedError
+    abs_path = sandbox.resolve_in_workdir(workdir, path)
+    if not os.path.exists(abs_path):
+        return f"错误：目录不存在：{path}"
+    if not os.path.isdir(abs_path):
+        return f"错误：不是目录：{path}"
+    
+    NOISE = {"__pycache__", ".pytest_cache", "*.pyc", ".git"}
+    names = [
+        n for n in os.listdir(abs_path)
+        if n not in NOISE and not n.endswith(".pyc")
+    ]
+    names.sort()
 
+    entries = []
+    for name in names:
+        full = os.path.join(abs_path, name)
+        entries.append(name + "/" if os.path.isdir(full) else name)
+    if not entries:
+        return f"{path}/：（空目录）"
+
+    lines = [f"{path}/："]                 # 首行：目录名
+    lines += ["  " + e for e in entries]  # 每条两空格缩进
+    return "\n".join(lines)
 
 def read_file(
     workdir: str,
@@ -246,8 +271,43 @@ def read_file(
     ----------------
     头部给出总行数与显示范围，如 ``parser.py（共 78 行，显示 1-40 行）：``，随后为带行号的正文。
     """
-    raise NotImplementedError
-
+    abs_path = sandbox.resolve_in_workdir(workdir, path)
+    if not os.path.exists(abs_path):
+        return f"错误：文件不存在：{path}"
+    if os.path.isdir(abs_path):
+        return f"错误：该路径对应目录而非文件：{path}"
+    
+    try:
+        with open(abs_path, encoding="utf-8") as f:
+            content = f.read()
+    except UnicodeDecodeError:
+        return f"错误：无法以文本读取文件：{path}"
+    
+    lines = content.splitlines()
+    total = len(lines)
+    if total == 0:
+        return f"空文件：{path}"
+    if end_line is None:
+        end_line = total          
+    if start_line < 1:
+        start_line = 1            
+    if end_line > total:
+        end_line = total          
+    if start_line > total:
+        return f"错误：起始行 {start_line} 超过文件总行数 {total}"
+    if start_line > end_line:
+        return f"错误：start_line {start_line} 大于 end_line {end_line}"
+    truncated = False
+    last = end_line
+    if last - start_line + 1 > max_read_lines:
+        last = start_line + max_read_lines - 1
+        truncated = True
+    header = f"{path}（共 {total} 行，显示 {start_line}-{last} 行）："
+    body = [f"{n:>6}\t{lines[n-1]}" for n in range(start_line, last + 1)]
+    out = header + "\n" + "\n".join(body)
+    if truncated:
+        out += f"\n…（已截断，共 {total} 行，用 start_line/end_line 分段读取）"
+    return out
 
 def search(
     workdir: str,
@@ -279,8 +339,49 @@ def search(
     ----------------
     命中行逐条 + 计数尾注 ``共 N 处匹配。``。
     """
-    raise NotImplementedError
+    if len(query) == 0:
+        return f"错误：搜索关键字不能为空"
+    root = os.path.realpath(workdir)
+    search_path = sandbox.resolve_in_workdir(workdir, path)
 
+    NOISE = {"__pycache__", ".pytest_cache", ".git"}
+    files = []
+    if os.path.isfile(search_path):
+        files.append(search_path)                          # path 指向单个文件
+    else:
+        for dirpath, dirnames, filenames in os.walk(search_path):
+            dirnames[:] = sorted(d for d in dirnames if d not in NOISE)  # 剪枝 + 排序
+            for name in sorted(filenames):
+                if name.endswith(".pyc"):
+                    continue
+                files.append(os.path.join(dirpath, name))
+
+    hits = []
+    truncated = False
+    for full in files:
+        try:
+            with open(full, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except UnicodeDecodeError:
+            continue                                        
+        rel = os.path.relpath(full, root)                   
+        for lineno, line in enumerate(lines, start=1):      
+            if query in line:                               
+                if len(line) > 200:
+                    line = line[:200] + "…"
+                hits.append(f"{rel}:{lineno}: {line}")
+                if len(hits) >= max_search_hits:
+                    truncated = True
+                    break
+        if truncated:
+            break
+
+    if not hits:
+        return f"（无匹配）：{query}"
+    out = "\n".join(hits) + f"\n共 {len(hits)} 处匹配。"
+    if truncated:
+        out += f"\n…（命中过多，仅显示前 {max_search_hits} 条，请缩小 query 或 path）"
+    return out
 
 def edit_file(workdir: str, path: str, old_string: str, new_string: str) -> str:
     """唯一匹配字符串替换（DESIGN §6.2 工具 4）。
@@ -307,9 +408,40 @@ def edit_file(workdir: str, path: str, old_string: str, new_string: str) -> str:
     确认信息 + 替换处起始行号 + 修改后该处上下文（带行号，最多约 5 行）。
     失败分支**不得**改动磁盘文件内容。
     """
-    raise NotImplementedError
+    if old_string == new_string:
+        return "错误：old_string 与 new_string 相同，无需修改。"
+    abs_path = sandbox.resolve_in_workdir(workdir, path)
+    if not os.path.exists(abs_path):
+        return f"错误：文件不存在：{abs_path} (如需新建请用 write_file)"
+    if not os.path.isfile(abs_path):
+        return f"错误：该路径对应的不是文件：{abs_path}"
+    
+    try:
+        with open(abs_path, encoding="utf-8") as f:
+            content = f.read()
 
+        n = content.count(old_string)          
+        if n == 0:
+            return f"错误：old_string 未在文件中找到，未做修改。"
+        if n > 1:
+            return f"错误：old_string 在文件中出现 {n} 次，不唯一，未做修改。"
 
+        new_content = content.replace(old_string, new_string)
+        with open(abs_path, "w", encoding="utf-8") as f:   # "w" = 覆盖整个文件
+            f.write(new_content)
+
+        offset = content.index(old_string)         
+        start_line = content[:offset].count("\n") + 1   # old_string 所在行数
+        new_lines = new_content.splitlines()
+        end = min(start_line + 4, len(new_lines))          # start_line 起，最多 5 行
+        context = "\n".join(
+            f"{i:>6}\t{new_lines[i - 1]}" for i in range(start_line, end + 1)
+        )
+        return f"已替换 {path}（第 {start_line} 行）：\n{context}"
+    
+    except UnicodeDecodeError:
+        return f"错误：文件 {abs_path} 打开失败，请检查是否为二进制格式"
+    
 def write_file(workdir: str, path: str, content: str) -> str:
     """创建或覆盖文本文件（DESIGN §6.2 工具 5）。
 
@@ -327,8 +459,16 @@ def write_file(workdir: str, path: str, content: str) -> str:
     ----------------
     ``f"已{创建|覆盖} <path>（{字节数} 字节，{行数} 行）。"``（``<path>`` 为 workdir 相对形式）。
     """
-    raise NotImplementedError
-
+    abs_path = sandbox.resolve_in_workdir(workdir, path)
+    if os.path.isdir(abs_path):
+        return f"错误：目标是一个目录：{abs_path}"
+    existed = os.path.exists(abs_path)
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    with open(abs_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    n_bytes = len(content.encode("utf-8"))
+    n_lines = len(content.splitlines())
+    return f"已{'覆盖' if existed else '创建'} {path}（{n_bytes} 字节，{n_lines} 行）。"
 
 def run_tests(
     workdir: str,
@@ -399,7 +539,74 @@ def run_tests(
     - 有失败：多加「失败用例：」段（点名 node id + 一句原因）与
       「失败详情（--tb=short，已截断/未截断）：」段。
     """
-    raise NotImplementedError
+    # 1. path 校验：只对 "::" 之前的文件部分做路径封闭（越界抛 PathEscape，交给护栏）。
+    if path:
+        file_part = path.split("::", 1)[0]
+        sandbox.resolve_in_workdir(workdir, file_part)
+
+    # 2. 组命令、在 workdir 里跑 pytest。
+    cmd = [
+        sys.executable, "-m", "pytest",
+        "-q", "--tb=short", "-rfE", "--color=no",
+        "-p", "no:cacheprovider",
+    ]
+    if path:
+        cmd.append(path)
+    try:
+        result = subprocess.run(
+            cmd, cwd=workdir, capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as e:
+        partial = e.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", "replace")
+        return (
+            f"错误：测试运行超时（>{timeout}s），已终止——可能改坏后引入死循环或无限递归。\n"
+            f"部分输出：\n{partial[-1000:]}"
+        )
+
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    rc = result.returncode
+    target = path if path else "全量"
+
+    # 3. 从汇总行抽统计（仅展示、不作判定）。
+    stats = "、".join(
+        f"{num} {kind}"
+        for num, kind in re.findall(
+            r"(\d+)\s+(passed|failed|errors?|skipped|xfailed|xpassed)", stdout
+        )
+    ) or "无统计"
+
+    # 4. 按 returncode 定性。
+    if rc == 5:
+        return f"[run_tests] 目标：{target}\n警告：未收集到任何测试（检查 path / 测试是否存在）"
+    if rc in (2, 3, 4):
+        return (
+            f"[run_tests] 目标：{target}\n错误：pytest 自身异常（returncode={rc}）\n"
+            f"{stderr[-1000:]}"
+        )
+
+    verdict = "PASS" if rc == 0 else "FAIL"
+    head = f"[run_tests] 目标：{target}\n结果：{verdict}（returncode={rc}）\n统计：{stats}"
+    if rc == 0:
+        return head
+
+    # 5. rc == 1：失败清单（-rfE 短行，永远保留）+ 失败详情（按预算截断）。
+    fail_lines = [ln for ln in stdout.splitlines() if ln.startswith(("FAILED", "ERROR"))]
+    fails = "\n".join(fail_lines) if fail_lines else "（无 FAILED/ERROR 明细行）"
+
+    detail = ""
+    if "= FAILURES =" in stdout:
+        detail = stdout.split("= FAILURES =", 1)[1]
+        detail = detail.split("= short test summary", 1)[0].strip("=\n ")
+    if len(detail) > max_test_output:
+        detail = (
+            detail[:max_test_output]
+            + f"\n…（失败详情过长已截断，共 {len(detail)} 字符，先修上面的用例再重跑）"
+        )
+
+    return f"{head}\n失败用例：\n{fails}\n失败详情（--tb=short）：\n{detail}"
 
 
 # ---------------------------------------------------------------------------
@@ -441,4 +648,40 @@ def guarded_execute(
     对**任意** ``tool_name`` / ``tool_input`` / ``workdir``，本函数**只返回 ``str``、永不抛异常**；
     任何最终会触碰 workdir 之外文件系统的操作都被拦成错误串、不产生实际读写。
     """
-    raise NotImplementedError
+    handlers = {
+        "list_dir": list_dir,
+        "read_file": read_file,
+        "search": search,
+        "edit_file": edit_file,
+        "write_file": write_file,
+        "run_tests": run_tests,
+    }
+    # 1. 未知工具：立即拦下（防模型幻觉出不存在的工具）。
+    if tool_name not in handlers:
+        return f"错误：未知工具 {tool_name}"
+
+    # 2. 分发：run_tests 额外注入 timeout；其余原样 **tool_input。
+    handler = handlers[tool_name]
+    kwargs = dict(tool_input)
+    if tool_name == "run_tests":
+        kwargs["timeout"] = test_timeout
+
+    # 3. 异常兜底（由具体到兜底），保证只返回 str、永不抛。
+    try:
+        result = handler(workdir, **kwargs)
+    except sandbox.PathEscape:
+        original = tool_input.get("path", "")
+        result = f"错误：路径越界，只能访问任务工作目录内的文件：{original}"
+    except (FileNotFoundError, IsADirectoryError) as e:
+        result = f"错误：文件访问失败：{e}"
+    except UnicodeDecodeError:
+        result = "错误：无法以文本读取（疑似二进制）"
+    except TypeError as e:
+        result = f"错误：工具参数不合法：{e}"
+    except Exception as e:
+        result = f"错误：工具执行失败：{type(e).__name__}: {e}"
+
+    # 4. 输出体量最后一道闸。
+    if len(result) > max_result_chars:
+        result = result[:max_result_chars] + "…（输出过长已截断）"
+    return result

@@ -112,6 +112,7 @@ def resolve_in_workdir(workdir: str, user_path: str) -> str:
     candidate = user_path if os.path.isabs(user_path) else os.path.join(root, user_path)
     candidate = os.path.realpath(candidate)
 
+    # 判定依据：与 root 相同，或以 root/ 开头，则认定为在同一工作区内
     if candidate == root or candidate.startswith(root + os.sep):
         return candidate
     else:
@@ -167,7 +168,7 @@ def make_workspace(fixture_dir: str, patch_path: Optional[str] = None) -> str:
 
     try:
         shutil.copytree(fixture_dir, work_dir,
-       ignore=shutil.ignore_patterns("__pycache__", "*.pyc"), dirs_exist_ok=True)    # 拷贝，跳过字节缓存
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"), dirs_exist_ok=True)    # 拷贝，跳过字节缓存
     except Exception as e:
         raise SandboxError(f"工作树拷贝失败：{fixture_dir} -> {work_dir}: {e}") from e 
 
@@ -179,6 +180,7 @@ def make_workspace(fixture_dir: str, patch_path: Optional[str] = None) -> str:
             capture_output=True,  
             text=True,                   
         )
+        
         if result.returncode != 0:
             cleanup_workspace(work_dir)
             raise SandboxError(f"git apply 失败：{result.stderr}")
