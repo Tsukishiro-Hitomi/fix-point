@@ -56,7 +56,6 @@ class TestDefaults:
         assert "anthropic/tmp" not in b.price_per_mtok
 
 
-@pytest.mark.skip(reason="TODO(你来补): cost_of 尚为 NotImplementedError 桩；实现后移除 skip")
 class TestCostOf:
     """§8.2 唯一计价函数：(in*pin + out*pout) / 1_000_000。"""
 
@@ -80,8 +79,6 @@ class TestCostOf:
         # 缺表 -> None（调用方按 0 展示 + 告警），绝不崩溃。
         assert cost_of(100, 100, Config(), model="anthropic/does-not-exist") is None
 
-
-@pytest.mark.skip(reason="TODO(你来补): from_env 尚为 NotImplementedError 桩；实现后移除 skip")
 class TestFromEnv:
     """§14.4 env -> 字段映射；密钥绝不进 Config。"""
 

@@ -13,7 +13,7 @@
 
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
-
+import os
 
 @dataclass
 class Config:
@@ -87,7 +87,17 @@ class Config:
         Returns:
             一个字段已按 env 覆盖的新 ``Config`` 实例。
         """
-        raise NotImplementedError
+        overrides = {}
+        model = os.environ.get("FIXPOINT_MODEL")
+        if model is not None:
+            overrides["model"] = model
+        max_steps = os.environ.get("MAX_STEPS")
+        if max_steps is not None:
+            overrides["max_steps"] = int(max_steps)
+        timeout = os.environ.get("RUN_TESTS_TIMEOUT")
+        if timeout is not None:
+            overrides["run_tests_timeout_s"] = int(timeout)
+        return cls(**overrides)
 
 
 def cost_of(
@@ -111,4 +121,9 @@ def cost_of(
         成本（美元）；若模型不在 ``config.price_per_mtok`` 中则返回 ``None``
         （调用方约定按 0 展示并记一条告警，绝不崩溃）。
     """
-    raise NotImplementedError
+    if model is None:
+        model = config.model
+    if model not in config.price_per_mtok:
+        return None
+    pin, pout = config.price_per_mtok.get(model)
+    return (float)(in_tokens * pin + out_tokens * pout) / 1000000
