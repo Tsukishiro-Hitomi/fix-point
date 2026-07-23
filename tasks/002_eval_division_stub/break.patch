@@ -1,0 +1,22 @@
+diff --git a/evaluator.py b/evaluator.py
+index 7f54935..e9b0819 100644
+--- a/evaluator.py
++++ b/evaluator.py
+@@ -48,8 +48,6 @@ def eval_ast(node: Node) -> Number:
+         op = node[1]
+         left = eval_ast(node[2])
+         right = eval_ast(node[3])
+-        if op == "/" and right == 0:
+-            raise EvalError("除法错误：除数为0")
+         if op == "+":
+             return left + right
+         if op == "-":
+@@ -57,7 +55,7 @@ def eval_ast(node: Node) -> Number:
+         if op == "*":
+             return left * right
+         if op == "/":
+-            return float(left) / right
++            raise NotImplementedError("division not implemented")
+     else:
+         return -eval_ast(node[1])
+ 

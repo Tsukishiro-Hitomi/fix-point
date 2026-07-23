@@ -1,0 +1,9 @@
+{
+  "id": "012_eval_addition",
+  "title": "Fix addition: '+' must add, not multiply",
+  "kind": "fix_bug",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_evaluator.py::test_eval_addition"
+  ]
+}

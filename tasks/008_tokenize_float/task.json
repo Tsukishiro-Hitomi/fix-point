@@ -1,0 +1,9 @@
+{
+  "id": "008_tokenize_float",
+  "title": "Fix float tokenization: '3.14' must be a float, not truncated to int",
+  "kind": "fix_bug",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_tokenizer.py::test_float_number"
+  ]
+}

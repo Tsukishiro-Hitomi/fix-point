@@ -1,0 +1,21 @@
+diff --git a/parser.py b/parser.py
+index d3d7d51..60a1956 100644
+--- a/parser.py
++++ b/parser.py
+@@ -90,14 +90,14 @@ def parse(tokens: list[Token]) -> Node:
+             return primary()
+     def term():
+         left = factor()
+-        while peek().type in ("STAR", "SLASH"):
++        while peek().type in ("PLUS", "MINUS"):
+             op = advance().value                       
+             right = factor()
+             left = ("binop", op, left, right)      
+         return left  
+     def expr():
+         left = term()
+-        while peek().type in ("PLUS", "MINUS"):
++        while peek().type in ("STAR", "SLASH"):
+             op = advance().value                      
+             right = term()
+             left = ("binop", op, left, right)     

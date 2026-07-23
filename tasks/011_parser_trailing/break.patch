@@ -1,0 +1,13 @@
+diff --git a/parser.py b/parser.py
+index d3d7d51..c1c037f 100644
+--- a/parser.py
++++ b/parser.py
+@@ -104,6 +104,6 @@ def parse(tokens: list[Token]) -> Node:
+         return left
+ 
+     node = expr()
+-    if peek().type != "EOF":
++    if False:
+         raise ParseError(f"表达式后面还有多余的东西：{peek().type}")
+     return node
+\ No newline at end of file

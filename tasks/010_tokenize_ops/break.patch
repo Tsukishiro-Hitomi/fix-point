@@ -1,0 +1,13 @@
+diff --git a/tokenizer.py b/tokenizer.py
+index 61d3a77..148d380 100644
+--- a/tokenizer.py
++++ b/tokenizer.py
+@@ -50,7 +50,7 @@ def tokenize(source: str) -> list[Token]:
+         errors.LexError: 遇到非法/未知字符时。
+     """
+     i = 0
+-    dic = {"+": "PLUS", "-": "MINUS", "*": "STAR", "/": "SLASH", "(": "LPAREN", ")": "RPAREN"}
++    dic = {"+": "PLUS", "-": "MINUS", "*": "SLASH", "/": "STAR", "(": "LPAREN", ")": "RPAREN"}
+     result = []
+     while i < len(source):
+         c = source[i]

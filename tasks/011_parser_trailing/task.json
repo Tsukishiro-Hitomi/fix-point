@@ -1,0 +1,9 @@
+{
+  "id": "011_parser_trailing",
+  "title": "Fix parser: leftover tokens after an expression must raise ParseError",
+  "kind": "fix_bug",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_parser.py::test_trailing_tokens_raise"
+  ]
+}

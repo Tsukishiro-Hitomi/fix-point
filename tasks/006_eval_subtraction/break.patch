@@ -1,0 +1,13 @@
+diff --git a/evaluator.py b/evaluator.py
+index 7f54935..fb2b240 100644
+--- a/evaluator.py
++++ b/evaluator.py
+@@ -53,7 +53,7 @@ def eval_ast(node: Node) -> Number:
+         if op == "+":
+             return left + right
+         if op == "-":
+-            return left - right
++            return left + right
+         if op == "*":
+             return left * right
+         if op == "/":

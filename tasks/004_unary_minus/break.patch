@@ -1,0 +1,13 @@
+diff --git a/parser.py b/parser.py
+index d3d7d51..76845f9 100644
+--- a/parser.py
++++ b/parser.py
+@@ -85,7 +85,7 @@ def parse(tokens: list[Token]) -> Node:
+         t = peek()
+         if t.type == "MINUS":
+             advance()
+-            return ("neg", factor())
++            return factor()
+         else:
+             return primary()
+     def term():

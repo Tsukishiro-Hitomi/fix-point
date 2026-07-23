@@ -1,0 +1,13 @@
+diff --git a/tokenizer.py b/tokenizer.py
+index 61d3a77..0bbea4a 100644
+--- a/tokenizer.py
++++ b/tokenizer.py
+@@ -64,7 +64,7 @@ def tokenize(source: str) -> list[Token]:
+             num = ""
+             is_float = False
+             j = i
+-            while j < len(source) and source[j] >= "0" and source[j] <= "9":
++            if j < len(source) and source[j] >= "0" and source[j] <= "9":
+                 num += source[j]
+                 j += 1
+             if j < len(source) and source[j] == ".":

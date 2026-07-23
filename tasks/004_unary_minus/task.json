@@ -1,0 +1,11 @@
+{
+  "id": "004_unary_minus",
+  "title": "Fix unary minus: '-x' must build a negation node",
+  "kind": "fix_bug",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_parser.py::test_unary_minus",
+    "tests/test_parser.py::test_unary_minus_after_op",
+    "tests/test_parser.py::test_double_unary_minus"
+  ]
+}

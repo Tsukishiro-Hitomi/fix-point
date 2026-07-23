@@ -1,0 +1,9 @@
+{
+  "id": "009_bare_dot",
+  "title": "Fix lexer: a trailing dot like '5.' must raise LexError",
+  "kind": "fix_bug",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_tokenizer.py::test_bare_dot_raises"
+  ]
+}

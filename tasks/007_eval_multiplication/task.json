@@ -1,0 +1,9 @@
+{
+  "id": "007_eval_multiplication",
+  "title": "Fix multiplication: '*' must multiply, not add",
+  "kind": "fix_bug",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_evaluator.py::test_eval_multiplication"
+  ]
+}

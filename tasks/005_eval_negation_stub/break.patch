@@ -1,0 +1,13 @@
+diff --git a/evaluator.py b/evaluator.py
+index 7f54935..6b6bfb1 100644
+--- a/evaluator.py
++++ b/evaluator.py
+@@ -59,7 +59,7 @@ def eval_ast(node: Node) -> Number:
+         if op == "/":
+             return float(left) / right
+     else:
+-        return -eval_ast(node[1])
++        raise NotImplementedError("negation not implemented")
+ 
+ 
+ 

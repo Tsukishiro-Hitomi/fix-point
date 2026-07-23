@@ -1,0 +1,9 @@
+{
+  "id": "005_eval_negation_stub",
+  "title": "Implement the unary-negation branch of eval_ast",
+  "kind": "implement_stub",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_evaluator.py::test_eval_unary_negation"
+  ]
+}

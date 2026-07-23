@@ -1,0 +1,9 @@
+{
+  "id": "010_tokenize_ops",
+  "title": "Fix operator tokenization: '*' and '/' map to the wrong token type",
+  "kind": "fix_bug",
+  "description": "Some tests are failing. Run the test suite, find the failing cases, and fix the library code so all tests pass. Do not modify any test file.",
+  "target_tests": [
+    "tests/test_tokenizer.py::test_operator_tokens"
+  ]
+}

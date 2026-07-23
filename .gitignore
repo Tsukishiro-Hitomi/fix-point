@@ -26,5 +26,6 @@ eval/results/
 ROADMAP.md
 DESIGN.md
 
-# test
-scratch_e2e.py
+# test / 一次性验证脚本
+scratch*.py
+scratch_e2e_verbose.py

@@ -1,0 +1,13 @@
+diff --git a/tokenizer.py b/tokenizer.py
+index 61d3a77..b391303 100644
+--- a/tokenizer.py
++++ b/tokenizer.py
+@@ -71,7 +71,7 @@ def tokenize(source: str) -> list[Token]:
+                 num += source[j]
+                 j += 1
+                 if j == len(source):
+-                    raise LexError(f"source 第{j - 1}个字符非法：{source[j - 1]}")
++                    pass
+                 elif source[j] < "0" or source[j] > "9":
+                     raise LexError(f"source 第{j}个字符非法：{source[j]}")
+                 else:
