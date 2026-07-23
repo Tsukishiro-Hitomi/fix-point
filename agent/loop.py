@@ -99,8 +99,25 @@ def build_system_prompt(config: Config) -> str:
     Returns:
         system prompt 字符串。
     """
-    raise NotImplementedError
-
+    base = (
+        "你是一个在受限工作目录内修复代码的自主 agent。你只能通过提供的工具"
+        "（list_dir / read_file / search / edit_file / write_file / run_tests）操作，"
+        "所有路径都限定在任务工作目录内。\n\n"
+        "工作循环：定位相关代码 → 做最小改动 → 立刻用 run_tests 跑测试 → 读红/绿 → "
+        "按结果迭代。每次改完都必须重新跑测试，以真实 run_tests 输出为准。\n\n"
+        "纪律：\n"
+        "- 只做让测试通过所需的最小改动，不顺手重构无关代码。\n"
+        "- edit_file 的 old_string 必须与文件内容精确、唯一匹配（先 read_file 看清上下文）。\n"
+        "- 反作弊：绝不修改测试文件、绝不删断言、绝不用 raise/skip 绕过测试。\n"
+        "- 所有测试通过时，用一句话总结修改然后停止，不要再调用任何工具。\n"
+        "- 保持简洁。"
+    )
+    if config.self_correction:
+        base += (
+            "\n\n反思：run_tests 报失败时，先读报错、诊断根因，再动手改；"
+            "别在没弄清原因前反复试探性修改。"
+        )
+    return base
 
 # ---------------------------------------------------------------------------
 # 主循环（DESIGN §8.3 / §8.9）
@@ -169,7 +186,85 @@ def run_agent(workdir: str, task: str, config: Optional[Config] = None) -> Agent
           一般不设 ``is_error``）。
         - MVP 不做历史裁剪。
     """
-    raise NotImplementedError
+    config = config or Config()
+    result = AgentResult(stop_reason="")
+    client = LLMClient(config)                  # ← 测试里被 monkeypatch 成假 LLM
+    system = build_system_prompt(config)
+
+    user_text = task
+    if config.enable_retrieval:                 # MVP 默认 False，不走检索
+        user_text = retrieve_context(task, workdir, config) + "\n\n" + task
+    messages = [{"role": "user", "content": user_text}]
+
+    for i in range(config.max_steps):
+        # A: 调模型前先查预算
+        if result.total_cost_usd >= config.cost_budget_usd:
+            result.stop_reason = "budget_exceeded"
+            result.num_steps = i
+            return result
+
+        # B: 调模型（异常兜底成 error，不上抛）
+        try:
+            resp = client.create(messages=messages, system=system, tools=TOOLS)
+        except Exception as e:
+            result.stop_reason = "error"
+            result.error = str(e)
+            result.num_steps = i
+            return result
+
+        # C: 记账
+        _accumulate_usage(result, resp, config)
+
+        # D: 保留完整 content 作为 assistant 消息（tool_use 块必须原样留着）
+        messages.append({"role": "assistant", "content": resp.content})
+
+        # E: 拆 text / tool_use，算本步 token/成本
+        assistant_text = "".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        )
+        tool_uses = [b for b in resp.content if getattr(b, "type", None) == "tool_use"]
+        usage = getattr(resp, "usage", None)
+        s_in = getattr(usage, "input_tokens", 0) if usage else 0
+        s_out = getattr(usage, "output_tokens", 0) if usage else 0
+        s_cost = step_cost(usage, config) if usage else 0.0
+
+        # F: 无 tool_use → 收尾
+        if not tool_uses:
+            result.steps.append(StepRecord(
+                index=i, assistant_text=assistant_text, tool_calls=[],
+                stop_reason=resp.stop_reason,
+                input_tokens=s_in, output_tokens=s_out, cost_usd=s_cost,
+            ))
+            result.final_text = assistant_text
+            result.stop_reason = "model_stop"
+            result.num_steps = i + 1
+            return result
+
+        # G: 逐个执行工具，结果合并进【一条】user 消息
+        tool_calls, tool_results = [], []
+        for tu in tool_uses:
+            out = guarded_execute(
+                tu.name, tu.input, workdir,
+                test_timeout=config.run_tests_timeout_s,
+                max_result_chars=config.max_tool_result_chars,
+            )
+            tool_calls.append(ToolCall(name=tu.name, input=tu.input, result_preview=out[:200]))
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,       # 必须与对应 tool_use 的 id 匹配
+                "content": out,
+            })
+        result.steps.append(StepRecord(
+            index=i, assistant_text=assistant_text, tool_calls=tool_calls,
+            stop_reason=resp.stop_reason,
+            input_tokens=s_in, output_tokens=s_out, cost_usd=s_cost,
+        ))
+        messages.append({"role": "user", "content": tool_results})
+
+    # for 正常跑完 → max_steps
+    result.stop_reason = "max_steps"
+    result.num_steps = config.max_steps
+    return result 
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +286,16 @@ def _accumulate_usage(result: AgentResult, resp: "object", config: Config) -> No
         resp: 一轮的 SDK ``Message``（读其 ``.usage``）。
         config: 提供计价表 / 计价函数。
     """
-    raise NotImplementedError
+    usage = getattr(resp, "usage", None)
+    if usage is None:
+        return                                  # 缺 usage → 跳过、不崩
+    in_tok = getattr(usage, "input_tokens", None)
+    out_tok = getattr(usage, "output_tokens", None)
+    if in_tok is None or out_tok is None:
+        return
+    result.total_input_tokens += in_tok
+    result.total_output_tokens += out_tok
+    result.total_cost_usd += step_cost(usage, config)
 
 
 def step_cost(usage: "object", config: Config) -> float:
@@ -207,7 +311,8 @@ def step_cost(usage: "object", config: Config) -> float:
     Returns:
         本步估算成本（美元）；缺表按 0.0。
     """
-    raise NotImplementedError
+    cost = cost_of(usage.input_tokens, usage.output_tokens, config)
+    return cost if cost is not None else 0.0
 
 
 def retrieve_context(task: str, workdir: str, config: Config) -> str:

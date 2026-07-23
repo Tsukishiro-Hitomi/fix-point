@@ -29,6 +29,7 @@ import logging
 from typing import NamedTuple, Optional
 
 import anthropic
+import os
 
 # cost_of 是「唯一计价函数」，owner 是 config.py（DESIGN §8.2）；llm 与 loop 复用同一份，
 # 消除三处重复计价。此处仅引用其字段/函数，不重复实现价格表逻辑。
@@ -96,7 +97,21 @@ class LLMClient:
             config: 全局旋钮面板（提供 model / timeout_s / max_retries / 价格表等）。
             model: 覆盖 ``config.model`` 的模型 id；``None`` 时用 ``config.model``。
         """
-        raise NotImplementedError
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise RuntimeError(
+                "缺少 ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL，"
+                "请先 cp .env.example .env 并填值"
+            )
+        self._config = config
+        self._model = model or config.model
+        self._client = anthropic.Anthropic(
+            timeout=config.timeout_s,
+            max_retries=config.max_retries,
+        )
+        self._input_tokens = 0
+        self._output_tokens = 0
+        self._calls = 0
+        self._warned_missing_price = False
 
     def create(
         self,
@@ -150,7 +165,33 @@ class LLMClient:
             SDK 原生 ``anthropic.types.Message``，含 ``.content`` / ``.stop_reason`` /
             ``.usage``。
         """
-        raise NotImplementedError
+        params = {
+            "model": self._model,
+            "max_tokens": self._config.max_tokens,
+            "messages": messages,
+        }
+        if system is not None:
+            params["system"] = system
+        if tools is not None:
+            params["tools"] = tools
+        if tool_choice is not None:
+            params["tool_choice"] = tool_choice
+
+        use_stream = self._config.stream if stream is None else stream
+        if use_stream:
+            with self._client.messages.stream(**params) as s:
+                msg = s.get_final_message()
+        else:
+            msg = self._client.messages.create(**params)
+
+        self._calls += 1
+        usage = getattr(msg, "usage", None)
+        if usage is None:
+            logger.warning("响应缺少 usage，跳过 token 累加")
+        else:
+            self._input_tokens += usage.input_tokens
+            self._output_tokens += usage.output_tokens
+        return msg
 
     def snapshot(self) -> Usage:
         """返回当前累计记账快照（含成本估算）。
@@ -162,7 +203,11 @@ class LLMClient:
           ``cost_of(<累计 input>, <累计 output>, self._config, self._model)``；
           模型缺表时返回 ``None`` 并（首次）打 warning，而非 0（区分「零成本」与「无价可算」）。
         """
-        raise NotImplementedError
+        cost = cost_of(self._input_tokens, self._output_tokens, self._config, self._model)
+        if cost is None and not self._warned_missing_price:
+            logger.warning("模型 %s 不在价格表，cost_usd 记为 None", self._model)
+            self._warned_missing_price = True
+        return Usage(self._input_tokens, self._output_tokens, self._calls, cost)
 
     def reset(self) -> None:
         """把记账累加器清零（tokens 与 calls 归零）。
@@ -170,7 +215,9 @@ class LLMClient:
         bench 每个任务开跑前调用，使各任务的 token / 成本互不串账。不影响 ``self._model``
         与 ``self._client``。
         """
-        raise NotImplementedError
+        self._input_tokens = 0
+        self._output_tokens = 0
+        self._calls = 0
 
     @property
     def model(self) -> str:
@@ -178,4 +225,4 @@ class LLMClient:
 
         默认 ``config.model``（opus）；构造时传 ``config.model_haiku`` 则为 haiku id。
         """
-        raise NotImplementedError
+        return self._model

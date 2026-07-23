@@ -25,3 +25,6 @@ eval/results/
 # plan
 ROADMAP.md
 DESIGN.md
+
+# test
+scratch_e2e.py

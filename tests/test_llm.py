@@ -111,7 +111,6 @@ def test_usage_fields_contract():
 # ---------------------------------------------------------------------------
 # 记账 / 成本数学：真实断言，先 skip（实现后取消）——DESIGN §7.5
 # ---------------------------------------------------------------------------
-@pytest.mark.skip(reason=_TODO)
 def test_construct_wires_sdk_without_secrets(install_fake_anthropic):
     """构造只经 timeout/max_retries 注入 SDK；不手传 api_key/base_url（DESIGN §7.3）。"""
     fake = install_fake_anthropic([])
@@ -122,7 +121,6 @@ def test_construct_wires_sdk_without_secrets(install_fake_anthropic):
     assert "base_url" not in fake._init_kwargs
 
 
-@pytest.mark.skip(reason=_TODO)
 def test_token_accumulation_and_calls(install_fake_anthropic):
     """连续 N 次 create 后累计等于各次之和，calls==N；reset 后归零（DESIGN §7.5）。"""
     scripted = [
@@ -145,7 +143,6 @@ def test_token_accumulation_and_calls(install_fake_anthropic):
     assert (zeroed.input_tokens, zeroed.output_tokens, zeroed.calls) == (0, 0, 0)
 
 
-@pytest.mark.skip(reason=_TODO)
 def test_cost_math_default_opus(install_fake_anthropic):
     """成本 = Σ(in/1e6·价in + out/1e6·价out)，按当前 model 价格表（DESIGN §7.5）。"""
     install_fake_anthropic([_FakeMessage(usage=_FakeUsage(157, 223))])
@@ -158,7 +155,6 @@ def test_cost_math_default_opus(install_fake_anthropic):
     assert client.snapshot().cost_usd == pytest.approx(expected)
 
 
-@pytest.mark.skip(reason=_TODO)
 def test_model_switch_uses_haiku_price(install_fake_anthropic):
     """传 config.model_haiku 即切消融模型，记账用 haiku 价（DESIGN §7.5）。"""
     install_fake_anthropic([_FakeMessage(usage=_FakeUsage(1000, 1000))])
@@ -172,7 +168,6 @@ def test_model_switch_uses_haiku_price(install_fake_anthropic):
     assert client.snapshot().cost_usd == pytest.approx(expected)
 
 
-@pytest.mark.skip(reason=_TODO)
 def test_unknown_model_cost_is_none_and_warns(install_fake_anthropic, caplog):
     """模型不在价格表：构造不报错，cost_usd is None 且有 warning、不崩（DESIGN §7.3/§7.5）。"""
     install_fake_anthropic([_FakeMessage(usage=_FakeUsage(10, 10))])
@@ -182,7 +177,6 @@ def test_unknown_model_cost_is_none_and_warns(install_fake_anthropic, caplog):
     assert any(r.levelname == "WARNING" for r in caplog.records)
 
 
-@pytest.mark.skip(reason=_TODO)
 def test_usage_none_is_robust(install_fake_anthropic, caplog):
     """usage 为 None 的假响应：不抛异常、只 warning、token 累加器不变（DESIGN §7.5 健壮性）。
 
@@ -198,7 +192,6 @@ def test_usage_none_is_robust(install_fake_anthropic, caplog):
     assert any(r.levelname == "WARNING" for r in caplog.records)
 
 
-@pytest.mark.skip(reason=_TODO)
 def test_create_calls_underlying_once_and_returns_verbatim(install_fake_anthropic):
     """边界纪律：create 只调用一次底层 messages.create，原样返回该 Message
     （不拆包、不改写、不分派 stop_reason、不执行工具）——DESIGN §7.5。"""
@@ -211,7 +204,6 @@ def test_create_calls_underlying_once_and_returns_verbatim(install_fake_anthropi
     assert returned is msg
 
 
-@pytest.mark.skip(reason=_TODO)
 def test_stream_default_from_config_and_same_type(install_fake_anthropic):
     """stream 缺省取 config.stream；stream=True 走 messages.stream 且返回同型 Message、
     记账一致（DESIGN §7.3/§7.5 流式一致性）。"""
@@ -226,7 +218,6 @@ def test_stream_default_from_config_and_same_type(install_fake_anthropic):
     assert client.snapshot().input_tokens == 5
 
 
-@pytest.mark.skip(reason=_TODO)
 def test_missing_api_key_fails_fast(monkeypatch):
     """缺 ANTHROPIC_API_KEY 时构造快速失败并给清晰报错（提到该变量 / .env）——DESIGN §7.3。"""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -235,16 +226,78 @@ def test_missing_api_key_fails_fast(monkeypatch):
     assert "ANTHROPIC_API_KEY" in str(ei.value) or ".env" in str(ei.value)
 
 
+def test_create_includes_optional_params_only_when_set(install_fake_anthropic):
+    """system/tools/tool_choice 仅在非 None 时放入；model 与 max_tokens 恒定传入。"""
+    fake = install_fake_anthropic([
+        _FakeMessage(usage=_FakeUsage(1, 1)),
+        _FakeMessage(usage=_FakeUsage(1, 1)),
+    ])
+    cfg = Config()
+    client = LLMClient(cfg)
+
+    # 只给 messages
+    client.create(messages=[{"role": "user", "content": "hi"}], stream=False)
+    kw = fake.messages.create_calls[0]
+    assert kw["model"] == cfg.model            # 恒传
+    assert kw["max_tokens"] == cfg.max_tokens  # 恒传
+    assert "messages" in kw
+    assert "system" not in kw                  # 未给 → 不放入
+    assert "tools" not in kw
+    assert "tool_choice" not in kw
+
+    # 给了 system/tools/tool_choice
+    client.create(
+        messages=[{"role": "user", "content": "hi"}],
+        system="be brief",
+        tools=[{"name": "x"}],
+        tool_choice={"type": "auto"},
+        stream=False,
+    )
+    kw2 = fake.messages.create_calls[1]
+    assert kw2["system"] == "be brief"
+    assert kw2["tools"] == [{"name": "x"}]
+    assert kw2["tool_choice"] == {"type": "auto"}
+
+
+def test_cache_fields_do_not_affect_cost(install_fake_anthropic):
+    """usage 带 cache_* 字段时，成本与 token 累计只认 input/output 两项。"""
+    usage = _FakeUsage(157, 223)
+    usage.cache_creation_input_tokens = 999  # 额外字段，不应参与计价
+    usage.cache_read_input_tokens = 888
+    install_fake_anthropic([_FakeMessage(usage=usage)])
+    cfg = Config()
+    client = LLMClient(cfg)
+    client.create(messages=[{"role": "user", "content": "hi"}], stream=False)
+
+    pin, pout = cfg.price_per_mtok[cfg.model]
+    expected = (157 * pin + 223 * pout) / 1_000_000
+    snap = client.snapshot()
+    assert snap.cost_usd == pytest.approx(expected)
+    assert (snap.input_tokens, snap.output_tokens) == (157, 223)
+
+
+def test_api_error_propagates_not_swallowed(install_fake_anthropic):
+    """底层 messages.create 抛异常时，create 原样上抛、不假装成功，累加器不动。"""
+    fake = install_fake_anthropic([])
+    client = LLMClient(Config())
+
+    class _Boom(Exception):  # 用哨兵异常，避免依赖具体 anthropic 异常构造签名
+        pass
+
+    def boom(**kwargs):
+        raise _Boom("gateway down")
+
+    fake.messages.create = boom
+    with pytest.raises(_Boom):
+        client.create(messages=[{"role": "user", "content": "hi"}], stream=False)
+    assert client.snapshot().calls == 0  # 没吞、没假装成功
+
+
 # ---------------------------------------------------------------------------
 # TODO 待补清单（覆盖 DESIGN §7.5 剩余验收项 + 集成边界）
 # ---------------------------------------------------------------------------
-# TODO(你来补): create 组装请求参数——system/tools/tool_choice 仅在非 None 时才放入；
-#               model 与 max_tokens(=config.max_tokens) 恒定传入（断言 fake.create_calls[0] 的 kwargs）。
-# TODO(你来补): cache_* 字段缺省按 0，成本只用 input/output 两项算（喂带/不带 cache 字段的 usage 对比）。
-# TODO(你来补): 重试/超时——断言代码中不存在自写 retry for/while 循环（可用 inspect 源码扫描）；
-#               max_retries/timeout 经 config 注入 SDK（已由 test_construct_wires_sdk_without_secrets 覆盖构造侧）。
-# TODO(你来补): API 异常照原样上抛（让 fake messages.create 抛 anthropic.APITimeoutError，
-#               断言 create 不吞、不假装成功）。
+# TODO(你来补): 重试/超时——不自写 retry 循环，交给 SDK（max_retries/timeout 经 config 注入，
+#               已由 test_construct_wires_sdk_without_secrets 覆盖）；源码扫 for/while 的断言略（脆弱、低价值）。
 # TODO(集成，不在单测): create 的真实网关调用——设好 ANTHROPIC_API_KEY/BASE_URL 后
 #               create(messages=[{"role":"user","content":"ping"}]) 返回带非空 .content/.stop_reason/.usage
 #               的 Message；工具穿透（传 tools + 触发 prompt → stop_reason=="tool_use" 且含 tool_use 块）。
