@@ -108,6 +108,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip running; just rebuild eval/scorecard.md from existing "
              "eval/results/*.json (loss-lessly re-renders, incl. the ablation table).",
     )
+    # —— 消融旋钮（V9）：相对 baseline 只翻一个，各跑一次 --label ——
+    p_bench.add_argument(
+        "--model",
+        metavar="ID",
+        help="Override the model for this run (e.g. anthropic/claude-haiku-4.5). "
+             "Default: config.model.",
+    )
+    p_bench.add_argument(
+        "--self-correction",
+        action="store_true",
+        help="Enable the self-correction system-prompt section (ablation).",
+    )
     return parser
 
 
@@ -185,6 +197,10 @@ def cmd_bench(args: argparse.Namespace, config: Config) -> int:
     返回：进程退出码（0 = 跑完并写出记分卡）。
     """
     config.stream = False  # bench 关流式：本网关流式不回传 output_tokens，非流式才准
+    if args.model:
+        config.model = args.model                 # V9 消融：换脑（opus↔haiku）
+    if args.self_correction:
+        config.self_correction = True             # V9 消融：开反思段
 
     def _load_all():
         files = sorted(glob.glob(os.path.join(

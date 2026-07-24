@@ -25,3 +25,12 @@
 
 - **pass@1 = 12/12 = 100%**
 - avg steps: 6.3  ·  avg tokens: 22142  ·  avg cost: $0.1202  ·  total cost: $1.44  ·  avg wall: 22.5s
+
+## Ablations
+
+| variant | model | retrieval | self-corr | pass@1 | avg steps | avg cost($) | total($) |
+|---|---|:--:|:--:|:--:|--:|--:|--:|
+| baseline | claude-opus-4.8 | False | False | 100% | 6.3 | 0.1202 | 1.44 |
+| haiku | claude-haiku-4.5 | False | False | 100% | 6.8 | 0.0360 | 0.43 |
+
+> 小任务集 + 采样随机性下，条件间的小差异可能是噪声；n_attempts=1。

@@ -65,21 +65,26 @@ python cli.py bench
 
 | model            | pass@1        | avg steps | avg tokens | avg cost |
 |------------------|:-------------:|:---------:|:----------:|:--------:|
-| claude-opus-4.8  | 100% (12/12)  |    6.3    |   22,136   |  $0.12   |
+| claude-opus-4.8  | 100% (12/12)  |    6.3    |   22,142   |  $0.12   |
 
-Full run: **$1.44** total · **~21.6 s/task** avg wall-clock. Every verdict is the harness
+Full run: **$1.44** total · **~22 s/task** avg wall-clock. Every verdict is the harness
 independently re-running pytest against the pristine tests — the model never grades itself.
 
 ### Ablations
 
 <!-- baseline row is real; the others land with v1 (V8 retrieval, V9 haiku) -->
 
-| variant                          | pass@1        | avg steps |
-|----------------------------------|:-------------:|:---------:|
-| opus-4.8 (baseline)              | 100% (12/12)  |    6.3    |
-| opus-4.8 + embedding retrieval   | _TODO (V8)_   |   _TODO_  |
-| opus-4.8 + self-correction       | _TODO_        |   _TODO_  |
-| haiku (weaker brain)             | _TODO (V9)_   |   _TODO_  |
+| variant                            | pass@1        | avg steps | avg cost |
+|------------------------------------|:-------------:|:---------:|:--------:|
+| opus-4.8 (baseline)                | 100% (12/12)  |    6.3    |  $0.120  |
+| haiku-4.5 (weaker / cheaper brain) | 100% (12/12)  |    6.8    |  $0.036  |
+| opus-4.8 + embedding retrieval     | _TODO (V8)_   |  _TODO_   |  _TODO_  |
+| opus-4.8 + self-correction         | _TODO_        |  _TODO_   |  _TODO_  |
+
+> On this deliberately simple task set (single-function bugs, clear failing tests) **both
+> models solve every task**, so the benchmark doesn't separate them on solve-rate (a ceiling
+> effect). The real gap is efficiency — **haiku is ~3× cheaper** at a slightly higher step
+> count. Separating models on solve-rate would need harder tasks (planned v2).
 
 ## How it works
 
