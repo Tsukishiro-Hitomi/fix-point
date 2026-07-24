@@ -120,6 +120,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable the self-correction system-prompt section (ablation).",
     )
+    p_bench.add_argument(
+        "--retrieval",
+        action="store_true",
+        help="Enable embedding retrieval (V8): prepend relevant code to the first message.",
+    )
     return parser
 
 
@@ -201,6 +206,8 @@ def cmd_bench(args: argparse.Namespace, config: Config) -> int:
         config.model = args.model                 # V9 消融：换脑（opus↔haiku）
     if args.self_correction:
         config.self_correction = True             # V9 消融：开反思段
+    if args.retrieval:
+        config.enable_retrieval = True            # V8 消融：开 embedding 检索
 
     def _load_all():
         files = sorted(glob.glob(os.path.join(
