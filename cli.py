@@ -24,6 +24,10 @@
 """
 
 import argparse
+import glob
+import json
+import os
+import sys
 from typing import Optional, Sequence
 
 from dotenv import load_dotenv
@@ -130,7 +134,25 @@ def cmd_solve(args: argparse.Namespace, config: Config) -> int:
 
     返回：进程退出码（0 成功装配并跑完；非 0 表示任务未找到等 CLI 级错误）。
     """
-    raise NotImplementedError("cmd_solve: task_sandbox → run_agent，见 §8.3 / ROADMAP M6")
+    fixture_dir = os.path.join(args.tasks, "fixture")
+    task = next((t for t in discover_tasks(args.tasks) if t.id == args.task_id), None)
+    if task is None:
+        print(f"错误：找不到任务 {args.task_id}（在 {args.tasks}/ 下）", file=sys.stderr)
+        return 1
+
+    print(f"▶ solve {task.id} · {task.title}")
+    with task_sandbox(fixture_dir, task.break_patch) as workdir:
+        result = run_agent(workdir, task.description, config)
+        for s in result.steps:
+            names = "、".join(tc.name for tc in s.tool_calls) or "（收尾）"
+            print(f"  #{s.index}: {names}")
+
+    print(f"\nstop_reason={result.stop_reason}  steps={result.num_steps}  "
+          f"tokens={result.total_input_tokens}/{result.total_output_tokens}  "
+          f"cost=${result.total_cost_usd:.4f}")
+    if result.final_text.strip():
+        print("summary:", result.final_text.strip())
+    return 0
 
 
 def cmd_bench(args: argparse.Namespace, config: Config) -> int:
@@ -155,7 +177,30 @@ def cmd_bench(args: argparse.Namespace, config: Config) -> int:
 
     返回：进程退出码（0 = 跑完并写出记分卡）。
     """
-    raise NotImplementedError("cmd_bench: run_bench + render_scorecard，见 §10.4 / §10.7")
+    def _load_all():
+        files = sorted(glob.glob(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "eval", "results", "*.json")))
+        rs = []
+        for fp in files:
+            with open(fp, encoding="utf-8") as f:
+                rs.append(json.load(f))
+        rs.sort(key=lambda r: (r.get("label") != "baseline", r.get("label", "")))
+        return rs
+
+    if args.render_only:
+        results = _load_all()
+        if not results:
+            print("错误：eval/results/ 下没有结果可渲染（先跑一次 bench）", file=sys.stderr)
+            return 1
+        render_scorecard(results, DEFAULT_SCORECARD)
+        print(f"已从 {len(results)} 组结果重建 {DEFAULT_SCORECARD}")
+        return 0
+
+    run_bench(args.tasks, config, args.label)
+    results = _load_all()
+    render_scorecard(results, DEFAULT_SCORECARD)
+    print(f"记分卡写入 {DEFAULT_SCORECARD}（{len(results)} 组结果）")
+    return 0
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -175,7 +220,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     返回：进程退出码，供 `sys.exit(main())` 使用。
     """
-    raise NotImplementedError("main: load_dotenv → Config.from_env → parse → dispatch，见 §14.4")
+    load_dotenv()
+    config = Config.from_env()
+    # MVP：真·流式显示留到 V7。当前网关在流式下不回传 output_tokens（成本会少算），
+    # 而增量显示尚未实现，开流式无益有害 → 先关，保证记分卡成本记账准确。
+    config.stream = False
+    args = build_parser().parse_args(argv)
+    if args.command == "solve":
+        return cmd_solve(args, config)
+    if args.command == "bench":
+        return cmd_bench(args, config)
+    return 1
 
 
 if __name__ == "__main__":

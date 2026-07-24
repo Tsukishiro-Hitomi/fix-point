@@ -37,13 +37,25 @@
   · avg_wall_s     = Σ wall_s / n_tasks（仅 agent 主循环墙钟）
 """
 
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import datetime
+from time import perf_counter
 from typing import Dict, List, Optional, Tuple
 
 # —— 消费的接口（§10.1，本模块只调用不实现）——
 from agent.config import Config
 from agent.sandbox import make_workspace, cleanup_workspace, task_sandbox
 from agent.loop import run_agent
+
+# judge 复跑禁写 .pyc：避免"打补丁→跑→还原"同秒内 pyc 按秒失效误用旧字节码
+_PYENV = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -103,7 +115,31 @@ def discover_tasks(tasks_dir: str) -> List[Task]:
     返回：
       list[Task]，按 id 升序。
     """
-    raise NotImplementedError("discover_tasks: 见 DESIGN §10.4 / §10.2")
+    tasks = []
+    for name in sorted(os.listdir(tasks_dir)):
+        d = os.path.join(tasks_dir, name)
+        if name == "fixture" or not os.path.isdir(d) or not name[:1].isdigit():
+            continue
+        tj = os.path.join(d, "task.json")
+        try:
+            with open(tj, encoding="utf-8") as f:
+                meta = json.load(f)
+            for k in ("id", "title", "kind", "description", "target_tests"):
+                if k not in meta:
+                    raise ValueError(f"缺字段 {k}")
+            if meta["kind"] not in ("fix_bug", "implement_stub"):
+                raise ValueError(f"kind 非法：{meta['kind']}")
+            if not meta["target_tests"]:
+                raise ValueError("target_tests 为空")
+            tasks.append(Task(
+                id=meta["id"], title=meta["title"], kind=meta["kind"],
+                description=meta["description"], target_tests=list(meta["target_tests"]),
+                dir=os.path.abspath(d),
+                break_patch=os.path.abspath(os.path.join(d, "break.patch")),
+            ))
+        except Exception as e:
+            print(f"[discover_tasks] 跳过坏任务 {name}：{e}", file=sys.stderr)
+    return sorted(tasks, key=lambda t: t.id)
 
 
 def prepare_workspace(task: Task, dest_root: Optional[str] = None) -> str:
@@ -123,7 +159,8 @@ def prepare_workspace(task: Task, dest_root: Optional[str] = None) -> str:
     返回：
       workspace 根目录的绝对路径（顶层就是 parser.py / tokenizer.py …，及 tests/）。
     """
-    raise NotImplementedError("prepare_workspace: 包装 sandbox.make_workspace，见 §10.4")
+    fixture_dir = os.path.join(os.path.dirname(task.dir), "fixture")
+    return make_workspace(fixture_dir, task.break_patch)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -147,7 +184,8 @@ def capture_baseline(fixture_dir: str) -> Dict[str, str]:
     返回：
       dict[str, str]，键为 node id（形如 "tests/test_parser.py::test_x"）。
     """
-    raise NotImplementedError("capture_baseline: 临时副本上采基线，见 §10.4")
+    with task_sandbox(fixture_dir, None) as wd:
+        return run_pytest(wd, 60)
 
 
 def run_pytest(workspace: str, timeout_s: int) -> Dict[str, str]:
@@ -159,9 +197,9 @@ def run_pytest(workspace: str, timeout_s: int) -> Dict[str, str]:
       · 加 `-p no:cacheprovider` 避免写 `.pytest_cache` 污染、保证判定无副作用。
       · 用内置 `--junitxml` 产出 XML 后解析为 {node_id: outcome}。
       · **node id 还原规则（务必照做，否则 judge 永远匹配不上）**：junitxml 的
-        `<testcase>` 只给 `classname`（点分、无 .py）+ `name`，直接拼不出 node id。
-        **用 `<testcase>` 的 `file` 属性 + `name` 拼 f"{file}::{name}"**
-        （file 如 "tests/test_parser.py"，name 如 "test_precedence_mul_over_add"；
+        `<testcase>` 只给 `classname`（点分、无 .py）+ `name`（此版 pytest 无 `file` 属性）。
+        **用 `classname` 点分转 `/` 再补 `.py`，与 `name` 拼 f"{file}::{name}"**
+        （classname "tests.test_parser" → file "tests/test_parser.py"，name 如 "test_precedence_mul_over_add"；
         参数化用例的 name 已带 "[param]" 后缀，**原样保留**）。这样还原出的 key
         与 `target_tests` 的字符串**逐字符可比**。
         （若嫌 junitxml 繁琐，可改用 pytest json 报告插件——二选一，但契约里写死
@@ -179,7 +217,37 @@ def run_pytest(workspace: str, timeout_s: int) -> Dict[str, str]:
     返回：
       dict[str, str]，键为逐字符可比的 node id。
     """
-    raise NotImplementedError("run_pytest: sys.executable -m pytest + junitxml，见 §10.4")
+    fd, xml_path = tempfile.mkstemp(suffix=".xml")
+    os.close(fd)
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pytest", "tests/", "-p", "no:cacheprovider",
+             "--junitxml", xml_path, "-q"],
+            cwd=workspace, capture_output=True, text=True, timeout=timeout_s, env=_PYENV,
+        )
+        outcomes: Dict[str, str] = {}
+        for tc in ET.parse(xml_path).iter("testcase"):
+            # junit 只给 classname（点分、无 .py）+ name；还原成 node id
+            # "tests.test_parser" + "test_x" -> "tests/test_parser.py::test_x"
+            classname, name = tc.get("classname"), tc.get("name")
+            if not classname or not name:
+                continue
+            file = classname.replace(".", "/") + ".py"
+            if tc.find("failure") is not None:
+                oc = "failed"
+            elif tc.find("error") is not None:
+                oc = "error"
+            elif tc.find("skipped") is not None:
+                oc = "skipped"
+            else:
+                oc = "passed"
+            outcomes[f"{file}::{name}"] = oc
+        return outcomes
+    finally:
+        try:
+            os.remove(xml_path)
+        except OSError:
+            pass
 
 
 def restore_pristine_tests(workspace: str, fixture_dir: str) -> None:
@@ -196,7 +264,10 @@ def restore_pristine_tests(workspace: str, fixture_dir: str) -> None:
 
     返回：None（原地覆盖 workspace 内文件）。
     """
-    raise NotImplementedError("restore_pristine_tests: 覆盖 tests/ + conftest.py，见 §10.4")
+    shutil.copytree(os.path.join(fixture_dir, "tests"),
+                    os.path.join(workspace, "tests"), dirs_exist_ok=True)
+    shutil.copy(os.path.join(fixture_dir, "conftest.py"),
+                os.path.join(workspace, "conftest.py"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -230,7 +301,11 @@ def judge(post: Dict[str, str], baseline: Dict[str, str],
     返回：
       (solved: bool, regressions: list[str])，regressions 已排序。
     """
-    raise NotImplementedError("judge: 回归规则见 §10.4 / §9.6，自行推导集合运算")
+    passing_now = {k for k, v in post.items() if v == "passed"}
+    baseline_ok = {k for k, v in baseline.items() if v == "passed"}
+    regressions = sorted(baseline_ok - passing_now)
+    solved = all(t in passing_now for t in target_tests) and not regressions
+    return solved, regressions
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -278,7 +353,46 @@ def run_one_task(task: Task, config: Config, baseline: Dict[str, str]) -> dict:
         "regressions": []              # 基线绿、复判红的 node id 列表
       }
     """
-    raise NotImplementedError("run_one_task: 单任务生命周期见 §10.4 / §9.6")
+    fixture_dir = os.path.join(os.path.dirname(task.dir), "fixture")
+    tr = {
+        "task_id": task.id, "status": "ok", "solved": False,
+        "steps": 0, "input_tokens": 0, "output_tokens": 0, "tokens": 0,
+        "cost_usd": 0.0, "wall_s": 0.0, "stop_reason": None,
+        "target_tests": task.target_tests, "regressions": [],
+    }
+    try:
+        workdir = prepare_workspace(task)
+    except Exception as e:
+        tr["status"] = "patch_failed"
+        print(f"[run_one_task] {task.id} patch_failed：{e}", file=sys.stderr)
+        return tr
+
+    try:
+        t0 = perf_counter()
+        try:
+            result = run_agent(workdir, task.description, config)
+        except Exception as e:
+            tr["status"], tr["wall_s"] = "agent_error", perf_counter() - t0
+            print(f"[run_one_task] {task.id} agent_error：{e}", file=sys.stderr)
+            return tr
+        tr["wall_s"] = perf_counter() - t0
+        tr["steps"] = result.num_steps
+        tr["input_tokens"] = result.total_input_tokens
+        tr["output_tokens"] = result.total_output_tokens
+        tr["tokens"] = result.total_input_tokens + result.total_output_tokens
+        tr["cost_usd"] = result.total_cost_usd or 0.0
+        tr["stop_reason"] = result.stop_reason
+
+        restore_pristine_tests(workdir, fixture_dir)
+        try:
+            post = run_pytest(workdir, config.judge_timeout_s)
+        except subprocess.TimeoutExpired:
+            tr["status"] = "judge_timeout"
+            return tr
+        tr["solved"], tr["regressions"] = judge(post, baseline, task.target_tests)
+        return tr
+    finally:
+        cleanup_workspace(workdir)
 
 
 def run_bench(tasks_dir: str, config: Config, label: str) -> dict:
@@ -322,7 +436,63 @@ def run_bench(tasks_dir: str, config: Config, label: str) -> dict:
     指标口径：见本模块顶部 docstring 的「指标的精确定义」（§10.5）；分母恒为
     n_tasks（含未解决 / status != "ok"）。
     """
-    raise NotImplementedError("run_bench: 整轮流程见 §10.4；落 eval/results/<label>.json")
+    fixture_dir = os.path.join(tasks_dir, "fixture")
+    baseline = capture_baseline(fixture_dir)
+    tasks = discover_tasks(tasks_dir)
+
+    task_results = []
+    for t in tasks:
+        print(f"[bench] ▶ {t.id} …", file=sys.stderr)
+        tr = run_one_task(t, config, baseline)
+        print(f"[bench]   {t.id}: {'SOLVED' if tr['solved'] else tr['status']} "
+              f"(steps={tr['steps']}, ${tr['cost_usd']:.4f})", file=sys.stderr)
+        task_results.append(tr)
+
+    n = len(task_results)
+    n_solved = sum(1 for tr in task_results if tr["solved"])
+
+    def avg(key):
+        return (sum(tr[key] for tr in task_results) / n) if n else 0.0
+
+    summary = {
+        "n_tasks": n, "n_solved": n_solved,
+        "solve_rate": (n_solved / n) if n else 0.0,
+        "pass_at_1": (n_solved / n) if n else 0.0,
+        "avg_steps": avg("steps"), "avg_tokens": avg("tokens"),
+        "avg_cost_usd": avg("cost_usd"),
+        "total_cost_usd": sum(tr["cost_usd"] for tr in task_results),
+        "avg_wall_s": avg("wall_s"),
+    }
+
+    root = os.path.dirname(os.path.abspath(tasks_dir.rstrip(os.sep)))
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                cwd=root, capture_output=True, text=True).stdout.strip() or "unknown"
+    except Exception:
+        commit = "unknown"
+
+    bench = {
+        "label": label,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "repo_commit": commit,
+        "config_snapshot": {
+            "model": config.model,
+            "enable_retrieval": config.enable_retrieval,
+            "self_correction": config.self_correction,
+            "max_steps": config.max_steps,
+            "cost_budget_usd": config.cost_budget_usd,
+            "run_tests_timeout_s": config.run_tests_timeout_s,
+            "judge_timeout_s": config.judge_timeout_s,
+        },
+        "tasks": task_results,
+        "summary": summary,
+    }
+
+    results_dir = os.path.join(root, "eval", "results")
+    os.makedirs(results_dir, exist_ok=True)
+    with open(os.path.join(results_dir, f"{label}.json"), "w", encoding="utf-8") as f:
+        json.dump(bench, f, ensure_ascii=False, indent=2)
+    return bench
 
 
 def render_scorecard(results: List[dict], out_path: str = "eval/scorecard.md") -> None:
@@ -349,4 +519,53 @@ def render_scorecard(results: List[dict], out_path: str = "eval/scorecard.md") -
 
     返回：None（写文件）。
     """
-    raise NotImplementedError("render_scorecard: 格式见 §10.6 / §10.7")
+    if not results:
+        return
+    primary = results[0]
+    cs = primary["config_snapshot"]
+    sm = primary["summary"]
+    L = []
+    L.append("# fixpoint scorecard\n")
+    L.append(f"- date: `{primary['timestamp']}`  ·  commit: `{primary['repo_commit']}`")
+    L.append(f"- model: `{cs['model']}`  ·  retrieval: `{cs['enable_retrieval']}`  ·  "
+             f"self-correction: `{cs['self_correction']}`")
+    L.append(f"- guardrails: max_steps=`{cs['max_steps']}`, cost_budget=`${cs['cost_budget_usd']}`, "
+             f"run_tests_timeout=`{cs['run_tests_timeout_s']}s`, judge_timeout=`{cs['judge_timeout_s']}s`")
+    L.append("")
+
+    # 每任务明细
+    L.append(f"## Per-task ({primary['label']})\n")
+    L.append("| task | solved | steps | tokens | cost($) | wall(s) | stop_reason | regressions |")
+    L.append("|---|:--:|--:|--:|--:|--:|---|---|")
+    for tr in primary["tasks"]:
+        flag = "✅" if tr["solved"] else ("⚠️ " + tr["status"] if tr["status"] != "ok" else "❌")
+        regs = ", ".join(t.split("::")[-1] for t in tr["regressions"]) or "-"
+        L.append(f"| {tr['task_id']} | {flag} | {tr['steps']} | {tr['tokens']} | "
+                 f"{tr['cost_usd']:.4f} | {tr['wall_s']:.1f} | {tr['stop_reason'] or '-'} | {regs} |")
+    L.append("")
+
+    # 汇总
+    L.append("## Summary\n")
+    L.append(f"- **pass@1 = {sm['n_solved']}/{sm['n_tasks']} = {sm['solve_rate']:.0%}**")
+    L.append(f"- avg steps: {sm['avg_steps']:.1f}  ·  avg tokens: {sm['avg_tokens']:.0f}  ·  "
+             f"avg cost: ${sm['avg_cost_usd']:.4f}  ·  total cost: ${sm['total_cost_usd']:.2f}  ·  "
+             f"avg wall: {sm['avg_wall_s']:.1f}s")
+    L.append("")
+
+    # 消融对比（全部 results）
+    if len(results) > 1:
+        L.append("## Ablations\n")
+        L.append("| variant | model | retrieval | self-corr | pass@1 | avg steps | avg cost($) | total($) |")
+        L.append("|---|---|:--:|:--:|:--:|--:|--:|--:|")
+        for r in results:
+            c, s = r["config_snapshot"], r["summary"]
+            L.append(f"| {r['label']} | {c['model'].split('/')[-1]} | {c['enable_retrieval']} | "
+                     f"{c['self_correction']} | {s['solve_rate']:.0%} | {s['avg_steps']:.1f} | "
+                     f"{s['avg_cost_usd']:.4f} | {s['total_cost_usd']:.2f} |")
+        L.append("")
+        L.append("> 小任务集 + 采样随机性下，条件间的小差异可能是噪声；n_attempts=1。")
+        L.append("")
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(L))
