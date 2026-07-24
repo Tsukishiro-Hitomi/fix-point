@@ -84,7 +84,7 @@ def _make_fake_llm_class(script):
             self._model = model or config.model
             self._i = 0
 
-        def create(self, messages, *, system=None, tools=None, tool_choice=None, stream=None):
+        def create(self, messages, *, system=None, tools=None, tool_choice=None, stream=None, on_text=None):
             msg = script[self._i]
             self._i += 1
             return msg

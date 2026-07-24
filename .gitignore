@@ -25,6 +25,7 @@ eval/results/
 # plan
 ROADMAP.md
 DESIGN.md
+V2_PLAN.md
 
 # test / 一次性验证脚本
 scratch*.py

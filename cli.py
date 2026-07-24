@@ -140,9 +140,14 @@ def cmd_solve(args: argparse.Namespace, config: Config) -> int:
         print(f"错误：找不到任务 {args.task_id}（在 {args.tasks}/ 下）", file=sys.stderr)
         return 1
 
-    print(f"▶ solve {task.id} · {task.title}")
+    config.stream = True  # V7：solve 开流式，模型文本边生成边显示
+    print(f"▶ solve {task.id} · {task.title}\n")
     with task_sandbox(fixture_dir, task.break_patch) as workdir:
-        result = run_agent(workdir, task.description, config)
+        result = run_agent(
+            workdir, task.description, config,
+            on_text=lambda t: print(t, end="", flush=True),  # 实时打印模型文本
+        )
+        print("\n\n—— 轨迹 ——")
         for s in result.steps:
             names = "、".join(tc.name for tc in s.tool_calls) or "（收尾）"
             print(f"  #{s.index}: {names}")
@@ -150,6 +155,8 @@ def cmd_solve(args: argparse.Namespace, config: Config) -> int:
     print(f"\nstop_reason={result.stop_reason}  steps={result.num_steps}  "
           f"tokens={result.total_input_tokens}/{result.total_output_tokens}  "
           f"cost=${result.total_cost_usd:.4f}")
+    if result.total_output_tokens == 0 and result.num_steps > 0:
+        print("（注：流式下本网关不回传 output tokens；成本为下界，准确值见 `cli.py bench`）")
     if result.final_text.strip():
         print("summary:", result.final_text.strip())
     return 0
@@ -177,6 +184,8 @@ def cmd_bench(args: argparse.Namespace, config: Config) -> int:
 
     返回：进程退出码（0 = 跑完并写出记分卡）。
     """
+    config.stream = False  # bench 关流式：本网关流式不回传 output_tokens，非流式才准
+
     def _load_all():
         files = sorted(glob.glob(os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "eval", "results", "*.json")))
@@ -222,9 +231,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """
     load_dotenv()
     config = Config.from_env()
-    # MVP：真·流式显示留到 V7。当前网关在流式下不回传 output_tokens（成本会少算），
-    # 而增量显示尚未实现，开流式无益有害 → 先关，保证记分卡成本记账准确。
-    config.stream = False
+    # 流式在各子命令内按需设置：solve 开（实时显示）、bench 关（成本记账准确）。
     args = build_parser().parse_args(argv)
     if args.command == "solve":
         return cmd_solve(args, config)

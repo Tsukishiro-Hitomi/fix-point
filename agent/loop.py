@@ -122,7 +122,7 @@ def build_system_prompt(config: Config) -> str:
 # ---------------------------------------------------------------------------
 # 主循环（DESIGN §8.3 / §8.9）
 # ---------------------------------------------------------------------------
-def run_agent(workdir: str, task: str, config: Optional[Config] = None) -> AgentResult:
+def run_agent(workdir: str, task: str, config: Optional[Config] = None, on_text=None) -> AgentResult:
     """驱动 agent 循环，返回 :class:`AgentResult`（DESIGN §8.3 / §8.9）。
 
     输入：
@@ -205,7 +205,7 @@ def run_agent(workdir: str, task: str, config: Optional[Config] = None) -> Agent
 
         # B: 调模型（异常兜底成 error，不上抛）
         try:
-            resp = client.create(messages=messages, system=system, tools=TOOLS)
+            resp = client.create(messages=messages, system=system, tools=TOOLS, on_text=on_text)
         except Exception as e:
             result.stop_reason = "error"
             result.error = str(e)

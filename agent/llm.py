@@ -26,7 +26,7 @@ loop.py / tools.py / sandbox.py。
 from __future__ import annotations
 
 import logging
-from typing import NamedTuple, Optional
+from typing import Callable, NamedTuple, Optional
 
 import anthropic
 import os
@@ -121,6 +121,7 @@ class LLMClient:
         tools: list[dict] | None = None,
         tool_choice: dict | None = None,
         stream: bool | None = None,
+        on_text: "Callable[[str], None] | None" = None,
     ) -> "anthropic.types.Message":
         """发**一轮**请求，返回 SDK 原生 ``Message``（DESIGN §7.3「create」）。
 
@@ -180,6 +181,9 @@ class LLMClient:
         use_stream = self._config.stream if stream is None else stream
         if use_stream:
             with self._client.messages.stream(**params) as s:
+                if on_text is not None:
+                    for delta in s.text_stream:  # 边生成边回调（V7 实时显示）
+                        on_text(delta)
                 msg = s.get_final_message()
         else:
             msg = self._client.messages.create(**params)
