@@ -1,12 +1,11 @@
 # Direct dependencies, version-pinned so a fresh Python 3.9 venv installs
-# reproducibly. NOTE: replace each <pin> with the exact version resolved by
-# `pip freeze` in that venv before publishing (see DESIGN.md §14.3).
+# reproducibly (versions from `pip freeze` in the project venv).
 
 # --- core (MVP) ---
-anthropic==<pin>          # 官方 SDK；经聚合网关调用，tool use 已验证可用
-python-dotenv==<pin>      # 启动时把 .env 读进环境变量
-pytest==<pin>             # run_tests 跑它；也用于 tests/ 里 agent 自身工具的单测
+anthropic==0.117.0        # 官方 SDK；经聚合网关调用，tool use 已验证可用
+python-dotenv==1.2.1      # 启动时把 .env 读进环境变量
+pytest==8.4.2             # run_tests 跑它；也用于 tests/ 里 agent 自身工具的单测
 
-# --- v1: embedding code retrieval ---
-sentence-transformers==<pin>   # 加载 bge-small-en-v1.5 做代码检索（英文语料）
+# --- v1: embedding code retrieval（V8 落地时取消注释并 pin 真实版本）---
 # 注意：会传递性拉入 torch + transformers（体积大，macOS 首次安装较慢）
+# sentence-transformers==x.y.z   # 加载 bge-small-en-v1.5 做代码检索（英文语料）
