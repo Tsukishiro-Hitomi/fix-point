@@ -57,22 +57,25 @@ python cli.py bench
 
 ## Results
 
-<!-- TODO: replace with real numbers from `python cli.py bench` -->
+<!-- from `python cli.py bench` (label=baseline): 12 controlled tasks, no retrieval / no self-correction -->
 
-| model                  | pass@1 | avg steps | avg tokens | avg cost |
-|------------------------|:------:|:---------:|:----------:|:--------:|
-| claude-opus-4.8        |  TODO  |   TODO    |    TODO    |   TODO   |
+| model            | pass@1        | avg steps | avg tokens | avg cost |
+|------------------|:-------------:|:---------:|:----------:|:--------:|
+| claude-opus-4.8  | 100% (12/12)  |    6.3    |   22,136   |  $0.12   |
+
+Full run: **$1.44** total · **~21.6 s/task** avg wall-clock. Every verdict is the harness
+independently re-running pytest against the pristine tests — the model never grades itself.
 
 ### Ablations
 
-<!-- TODO: fill after v1. Shows what each capability is worth. -->
+<!-- baseline row is real; the others land with v1 (V8 retrieval, V9 haiku) -->
 
-| variant                          | pass@1 | avg steps |
-|----------------------------------|:------:|:---------:|
-| opus-4.8 (baseline)              |  TODO  |   TODO    |
-| opus-4.8 + embedding retrieval   |  TODO  |   TODO    |
-| opus-4.8 + self-correction       |  TODO  |   TODO    |
-| haiku (weaker brain)             |  TODO  |   TODO    |
+| variant                          | pass@1        | avg steps |
+|----------------------------------|:-------------:|:---------:|
+| opus-4.8 (baseline)              | 100% (12/12)  |    6.3    |
+| opus-4.8 + embedding retrieval   | _TODO (V8)_   |   _TODO_  |
+| opus-4.8 + self-correction       | _TODO_        |   _TODO_  |
+| haiku (weaker brain)             | _TODO (V9)_   |   _TODO_  |
 
 ## How it works
 
