@@ -10,15 +10,19 @@
 ![agent tests](https://img.shields.io/badge/agent%20tests-passing-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-<!-- TODO: demo.gif — 8–15s, one task going red → agent loop → green -->
+<!-- TODO(demo.gif): record 8–15s of one task going red → agent loop → green,
+     save to docs/demo.gif, then uncomment the line below.
 ![fixpoint solving a task](docs/demo.gif)
+-->
 
 ## Why this exists
 
-<!-- 2–3 sentences: a controlled, teaching-grade re-implementation of the
-     "give it a task, it edits code and runs tests until green" loop that tools
-     like Claude Code do — small enough to read end-to-end, rigorous enough to
-     be measured pass@1 on a fixed benchmark. -->
+A coding agent built from scratch: hand it a repo with failing tests and it
+locates the broken code, edits it, runs the tests, and iterates until green —
+the core loop that tools like Claude Code run, small enough to read end-to-end.
+What makes it more than a demo is measurement: every task is scored by a harness
+that independently re-runs pytest, so **pass@1 is an observed number, never the
+model's own word**.
 
 ## Architecture
 
@@ -79,10 +83,13 @@ independently re-running pytest against the pristine tests — the model never g
 
 ## How it works
 
-- **The loop** — <!-- TODO: 2–3 lines: model sees the task, calls tools, observes
-  results, iterates; bounded by MAX_STEPS and a per-task cost budget. -->
-- **The tools** — `list_dir`, `read_file`, `search`, `edit_file`, `write_file`,
-  `run_tests`. <!-- TODO: 1 line each; all paths confined to the task workdir. -->
+- **The loop** (`agent/loop.py`) — a ReAct cycle: the model sees the task, calls
+  tools, observes results, iterates. Bounded by `max_steps` and a per-task USD cost
+  budget; it stops when the model quits calling tools (or a guardrail trips).
+- **The tools** (`agent/tools.py`) — `list_dir`, `read_file` (numbered lines),
+  `search` (literal grep), `edit_file` (unique-match string replace), `write_file`,
+  `run_tests` (pytest → compact PASS/FAIL). Every path is confined to the task
+  workdir by `agent/sandbox.py`; errors come back as strings, never exceptions.
 - **The task set** — a single pristine `fixture/`: a compact arithmetic-expression
   evaluator in three stages — `tokenizer` (source → tokens), `parser` (tokens → AST
   via recursive descent, with real operator precedence, left-associativity, and
@@ -91,9 +98,11 @@ independently re-running pytest against the pristine tests — the model never g
   51 pytest cases across the three stages plus end-to-end integration. Each task
   then applies a `break.patch` that breaks exactly one function, turning a known
   subset of those tests red; the agent has to make the suite green again.
-- **Scoring** — a harness independently re-runs `pytest` against the pristine
-  tests. A task is *solved* iff the target test passes **and** no other test
-  newly fails. The model is never trusted to grade itself. <!-- TODO: expand. -->
+- **Scoring** — after the agent stops, the harness restores the pristine test
+  files (so a run can't cheat by editing tests), then independently re-runs the
+  full `pytest`. A task is *solved* iff its target tests pass **and** no
+  previously-green test newly fails (regression check). The model is never
+  trusted to grade itself.
 
 ## Project layout
 
@@ -107,10 +116,13 @@ cli.py    solve / bench entrypoints
 
 ## Limitations & non-goals
 
-<!-- TODO: honest list. single fixture domain (arithmetic evaluator);
-     string-replace edits only; not a general coding agent; cost depends on the
-     gateway; agent behavior is not bit-reproducible (LLM sampling); embedding
-     retrieval is English-only (bge-small-en). -->
+- Single fixture domain (a mini arithmetic-expression evaluator) — not a general
+  code agent yet; generalizing to real repos with failing tests is the planned v2.
+- Edits are exact string replacements (`edit_file`), not fuzzy / semantic patches.
+- Test runner is pytest-only; `run_tests` parses its output.
+- Cost / latency depend on the aggregation gateway; token accounting is an estimate.
+- Not bit-reproducible: the LLM samples, so steps / cost vary run to run.
+- (v1) embedding retrieval will be English-only (`bge-small-en`).
 
 ## License
 
